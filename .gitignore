@@ -10,3 +10,8 @@ wheels/
 .venv
 
 CLAUDE.md
+
+# Run outputs
+results/
+.cache/
+
