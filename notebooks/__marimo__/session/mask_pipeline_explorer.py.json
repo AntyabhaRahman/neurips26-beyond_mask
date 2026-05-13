@@ -1,0 +1,230 @@
+{
+  "version": "1",
+  "metadata": {
+    "marimo_version": "0.23.6",
+    "script_metadata_hash": null
+  },
+  "cells": [
+    {
+      "id": "Hbol",
+      "code_hash": "cde590c5bd79f13fc077b811e11e83d6",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "MJUe",
+      "code_hash": "65cf7bce7e14fe1528b5eadb8d5aae82",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h1 id=\"mask-pipeline-explorer\">MASK pipeline explorer</h1>\n<span class=\"paragraph\">Given a <strong>baseline</strong> model and a <strong>judge</strong> model, runs the full MASK pipeline in <code>--test</code> mode\n(5 rows per archetype) and shows the intermediate state at each step:</span>\n<ol>\n<li><strong>Generate</strong> &mdash; baseline model responses + per-call metadata sidecar</li>\n<li><strong>Evaluate</strong> &mdash; judge verdicts (<code>A</code> / <code>B</code> / <code>C</code> / <code>D</code> for binary, <code>(lower, upper)</code> for numerical)</li>\n<li><strong>Metric</strong> &mdash; per-row honesty / accuracy</li>\n<li><strong>Aggregate</strong> &mdash; final <code>all_results.json</code> plus a derived non-committal share</li>\n</ol>\n<span class=\"paragraph\">All scripts are invoked via <code>uv run python mask/&lt;script&gt;.py --test ...</code> under <code>mask/</code>. Cached\nOpenRouter responses make re-runs of the same <code>(baseline, judge, archetypes)</code> essentially free.</span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bwTr",
+      "code_hash": "674b0e0464e7e4fc096edf371495e474",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "XNna",
+      "code_hash": "3863ed9a12f1fca839e9d0fcd04c60d2",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<marimo-callout-output data-html='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;&lt;strong&gt;OpenRouter API key configured.&lt;/strong&gt;&lt;/span&gt;&lt;/span&gt;&quot;' data-kind='&quot;success&quot;'></marimo-callout-output>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "vblA",
+      "code_hash": "a85b8f9d21dd1093444bd2a696f666f5",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/html": "<div style='display: flex;flex: 1;flex-direction: column;justify-content: flex-start;align-items: normal;flex-wrap: nowrap;gap: 0.5rem'><marimo-ui-element object-id='vblA-0' random-id='c944b914-8a0b-a2ef-2d40-deaec3cf992e'><marimo-text data-initial-value='&quot;google/gemini-3.1-flash-lite&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Baseline (test) model&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;&quot;' data-kind='&quot;text&quot;' data-full-width='true' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><marimo-ui-element object-id='vblA-1' random-id='19222d4c-b9a3-ff70-428a-ce19e15f869d'><marimo-text data-initial-value='&quot;moonshotai/kimi-k2.6&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Judge model (binary archetypes)&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;&quot;' data-kind='&quot;text&quot;' data-full-width='true' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><marimo-ui-element object-id='vblA-2' random-id='d4073a29-6cb8-4718-dbfe-9c7823b4d15a'><marimo-text data-initial-value='&quot;moonshotai/kimi-k2.6&quot;' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Numerical judge model (statistics, JSON schema)&lt;/span&gt;&lt;/span&gt;&quot;' data-placeholder='&quot;&quot;' data-kind='&quot;text&quot;' data-full-width='true' data-disabled='false' data-debounce='true'></marimo-text></marimo-ui-element><marimo-ui-element object-id='vblA-3' random-id='16ac6259-ac78-971c-3e0a-f829a357968f'><marimo-multiselect data-initial-value='[&quot;statistics&quot;,&quot;known_facts&quot;]' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Archetypes&lt;/span&gt;&lt;/span&gt;&quot;' data-options='[&quot;continuations&quot;,&quot;disinformation&quot;,&quot;doubling_down_known_facts&quot;,&quot;known_facts&quot;,&quot;provided_facts&quot;,&quot;statistics&quot;]' data-full-width='false'></marimo-multiselect></marimo-ui-element><marimo-ui-element object-id='vblA-4' random-id='9107386a-bc1c-ca66-960f-1d0aef3b511b'><marimo-checkbox data-initial-value='false' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Force regenerate (delete existing test_csv_data outputs first)&lt;/span&gt;&lt;/span&gt;&quot;' data-disabled='false'></marimo-checkbox></marimo-ui-element><marimo-ui-element object-id='vblA-5' random-id='41c6bbe0-a8f5-4cbb-93d2-5123e4c39ded'><marimo-button data-initial-value='0' data-label='&quot;&lt;span class=&#92;&quot;markdown prose dark:prose-invert contents&#92;&quot;&gt;&lt;span class=&#92;&quot;paragraph&#92;&quot;&gt;Run pipeline&lt;/span&gt;&lt;/span&gt;&quot;' data-kind='&quot;neutral&quot;' data-disabled='false' data-full-width='false'></marimo-button></marimo-ui-element></div>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "bkHC",
+      "code_hash": "ede40e86a6c856dbd1e4f1ee1e7826ff",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><span class=\"paragraph\"><em>Set inputs above and click <strong>Run pipeline</strong> to start.</em></span></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "lEQa",
+      "code_hash": "caf03bd16357abb20ab0a4c7c36d2879",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "PKri",
+      "code_hash": "5e996048e441a9ef8c080fb5bfad6199",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"1-generation-step-output\">1. Generation step output</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Xref",
+      "code_hash": "348e0f402658e40fbdf4ddb2f9c3263c",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/plain": ""
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "SFPL",
+      "code_hash": "4edcd29a8d8768ae406f02609c1cf7b6",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "BYtC",
+      "code_hash": "c775ca785353af9af684eac97ae8e5e5",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"2-evaluation-step-output\">2. Evaluation step output</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "RGSE",
+      "code_hash": "5b2d1c2d6d9299f0ca9eed5971ac081b",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Kclp",
+      "code_hash": "c7846e22b0ae60eeafdc0d594b461fc6",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"3-per-row-metric-output\">3. Per-row metric output</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "emfo",
+      "code_hash": "0260b13ea8a4ec8b4fcc37f7778f9c50",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "Hstk",
+      "code_hash": "0fd39a7c20eb544b4da0780f889c4701",
+      "outputs": [
+        {
+          "type": "data",
+          "data": {
+            "text/markdown": "<span class=\"markdown prose dark:prose-invert contents\"><h2 id=\"4-final-aggregated-results\">4. Final aggregated results</h2></span>"
+          }
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "nWHF",
+      "code_hash": "2ec0626fb070468ed68d71cf2ebe31c5",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    },
+    {
+      "id": "iLit",
+      "code_hash": "801c6a4be111699761fe82e4da70d704",
+      "outputs": [
+        {
+          "type": "error",
+          "ename": "ancestor-stopped",
+          "evalue": "This cell wasn't run because an ancestor was stopped with `mo.stop`: ",
+          "traceback": []
+        }
+      ],
+      "console": []
+    }
+  ]
+}
