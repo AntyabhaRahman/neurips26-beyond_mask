@@ -29,9 +29,21 @@ class ChatResult:
     raw: dict | None = None
 
 
-def _cache_key(model: str, messages: list[dict], temperature: float, max_tokens: int) -> str:
+def _cache_key(
+    model: str,
+    messages: list[dict],
+    temperature: float,
+    max_tokens: int,
+    response_format: dict | None,
+) -> str:
     payload = json.dumps(
-        {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens},
+        {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "response_format": response_format,
+        },
         sort_keys=True,
         ensure_ascii=False,
     ).encode("utf-8")
@@ -116,21 +128,24 @@ class OpenRouterClient:
         temperature: float,
         max_tokens: int,
         cache_dir: Path | None,
+        response_format: dict | None = None,
     ) -> ChatResult:
         cache_path: Path | None = None
         if cache_dir is not None:
-            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens)}.json"
+            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, response_format)}.json"
             hit = _load_cached(cache_path)
             if hit is not None:
                 return hit
 
-        body = {
+        body: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "usage": {"include": True},
         }
+        if response_format is not None:
+            body["response_format"] = response_format
 
         start = time.perf_counter()
         async with self._sem:
