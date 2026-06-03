@@ -71,6 +71,18 @@ def _(ENV_FILE, os):
     return (api_key,)
 
 
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## 1. Choose a dataset row
+
+    Select a MASK archetype, then move the row slider to inspect one example at a
+    time. The row preview shows every field as a vertical `field` / `value`
+    table, since each MASK split can expose a different schema.
+    """)
+    return
+
+
 @app.function
 def jsonable(value):
     if value is None or isinstance(value, str | int | float | bool):
@@ -100,10 +112,21 @@ def code_block(text):
 
 
 @app.function
-def append_jsonl(path, record, json_module):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json_module.dumps(record, ensure_ascii=False, default=str) + "\n")
+def chat_message_to_dict(message):
+    role = getattr(message, "role", "user") or "user"
+    content = getattr(message, "content", None)
+    if content is None:
+        parts = getattr(message, "parts", [])
+        content = "\n".join(str(getattr(part, "text", part)) for part in parts)
+    return {"role": role, "content": str(content)}
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+    ## MASK Dataset with different splits
+    """)
+    return
 
 
 @app.cell
@@ -126,7 +149,7 @@ def _(mo):
         full_width=True,
     )
     config
-    return ARCHETYPES, DATASET_ID, SPLIT, config
+    return DATASET_ID, SPLIT, config
 
 
 @app.cell
@@ -159,26 +182,37 @@ def _(ds, mo):
 
 
 @app.cell
-def _(ds, pl, row_index):
+def _(ds, json, pl, row_index):
     selected_row_idx = int(row_index.value)
     selected_row = dict(ds[selected_row_idx])
-    preview_keys = [
-        key
-        for key in (
-            "type",
-            "proposition",
-            "ground_truth",
-            "formatted_ground_truth",
-            "delivery",
-            "task_id",
-        )
-        if key in selected_row
-    ]
+
+    def preview_value(value):
+        if value is None:
+            return ""
+        if isinstance(value, dict | list | tuple):
+            return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+        return str(value)
+
     row_preview = pl.DataFrame(
-        [{key: jsonable(selected_row[key]) for key in preview_keys}]
+        [
+            {"field": key, "value": preview_value(value)}
+            for key, value in selected_row.items()
+        ]
     )
     row_preview
-    return row_preview, selected_row, selected_row_idx
+    return selected_row, selected_row_idx
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## 2. Write prompt templates
+
+    Use Python-style field names from the selected dataset row, such as
+    `{system_prompt}`, `{user_prompt}`, `{proposition}`, or `{ground_truth}`.
+    The next cell renders the final messages exactly as they will be sent.
+    """)
+    return
 
 
 @app.cell
@@ -189,22 +223,14 @@ def _(mo):
         label="System prompt template",
         full_width=True,
     )
-    user_template = mo.ui.text_area(
-        value="{user_prompt}",
-        rows=8,
-        label="User prompt template",
-        full_width=True,
-    )
-    mo.vstack([system_template, user_template])
-    return system_template, user_template
+    mo.vstack([system_template])
+    return (system_template,)
 
 
 @app.cell
-def _(mo, selected_row, system_template, user_template):
+def _(mo, selected_row, system_template):
     available_fields = set(selected_row)
-    requested_fields = template_fields(system_template.value) | template_fields(
-        user_template.value
-    )
+    requested_fields = template_fields(system_template.value)
     missing_fields = sorted(requested_fields - available_fields)
     mo.stop(
         bool(missing_fields),
@@ -220,26 +246,33 @@ def _(mo, selected_row, system_template, user_template):
         key: "" if value is None else value for key, value in selected_row.items()
     }
     rendered_system_prompt = system_template.value.format_map(row_context)
-    rendered_user_prompt = user_template.value.format_map(row_context)
     messages = [
         {"role": "system", "content": rendered_system_prompt},
-        {"role": "user", "content": rendered_user_prompt},
     ]
 
     mo.md(
         "## Rendered prompt\n\n"
         "**system**\n\n"
         f"{code_block(rendered_system_prompt)}\n\n"
-        "**user**\n\n"
-        f"{code_block(rendered_user_prompt)}"
     )
-    return messages, rendered_system_prompt, rendered_user_prompt
+    return (rendered_system_prompt,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## 3. Configure the model call
+
+    Enter any OpenRouter model id, choose sampling settings, and optionally set a
+    seed. Leave the seed blank when you do not need deterministic sampling.
+    """)
+    return
 
 
 @app.cell
 def _(mo):
     model_id = mo.ui.text(
-        value="google/gemini-3.1-flash-lite",
+        value="openai/gpt-5.4-mini",
         label="OpenRouter model id",
         full_width=True,
     )
@@ -252,13 +285,13 @@ def _(mo):
     )
     max_tokens = mo.ui.slider(
         start=1,
-        stop=4096,
+        stop=32768,
         step=1,
-        value=256,
+        value=1024,
         label="Max tokens",
     )
     seed = mo.ui.text(
-        value="",
+        value="42",
         label="Optional seed",
         full_width=True,
     )
@@ -269,7 +302,7 @@ def _(mo):
 
 
 @app.cell
-def _(max_tokens, model_id, mo, seed, temperature):
+def _(max_tokens, mo, model_id, seed, temperature):
     model_id_value = model_id.value.strip()
     mo.stop(not model_id_value, mo.md("**Model id is required.**"))
 
@@ -288,71 +321,159 @@ def _(max_tokens, model_id, mo, seed, temperature):
     return model_id_value, model_params, seed_value
 
 
-@app.cell
-def _(mo, model_id_value):
-    run = mo.ui.run_button(
-        label=f"Run {model_id_value}",
-        kind="success",
-    )
-    run
-    return (run,)
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## 4. Continue as a chat
+
+    Use this chat when you want multi-turn behavior. It prepends the rendered
+    system prompt, then sends the full user/assistant chat history to OpenRouter
+    on every turn. When you are done, use the save button below to persist the
+    whole conversation as one JSON file.
+    """)
+    return
 
 
 @app.cell
-async def _(
+def _(
     CACHE_ROOT,
-    DATASET_ID,
     OpenRouterClient,
-    RESULTS_ROOT,
-    SPLIT,
     api_key,
-    config_name,
-    datetime,
     ds_slug,
-    git_sha,
-    json,
-    messages,
     mo,
     model_id_value,
     model_params,
     rendered_system_prompt,
-    rendered_user_prompt,
-    run,
     seed_value,
+    selected_row_idx,
+    use_cache,
+):
+    conversation_id = f"{ds_slug}-row-{selected_row_idx}"
+
+    async def openrouter_chat(chat_messages, config):
+        if not api_key:
+            return "`OPENROUTER_API_KEY` not set. Export it or add it to `mask/mask/.env`."
+
+        history = [chat_message_to_dict(message) for message in chat_messages]
+        outbound_messages = [
+            {"role": "system", "content": rendered_system_prompt},
+            *history,
+        ]
+        cache_dir = CACHE_ROOT if use_cache.value else None
+
+        async with OpenRouterClient(api_key) as client:
+            result = await client.chat(
+                model=model_id_value,
+                messages=outbound_messages,
+                temperature=model_params["temperature"],
+                max_tokens=model_params["max_tokens"],
+                cache_dir=cache_dir,
+                seed=seed_value,
+                session_id=conversation_id,
+            )
+
+        return result.text if result.text else f"[ERROR: {result.error}]"
+
+    chat = mo.ui.chat(
+        openrouter_chat,
+        prompts=[],
+        max_height=520,
+        disabled=not bool(api_key),
+    )
+    chat
+    return chat, conversation_id
+
+
+@app.cell(hide_code=True)
+def _(chat, conversation_id, mo, rendered_system_prompt):
+    _history = [chat_message_to_dict(message) for message in chat.value]
+    if _history:
+        formatted_messages = [
+            {"role": "system", "content": rendered_system_prompt},
+            *_history,
+        ]
+        rendered = "\n\n".join(
+            f"### {idx}. {message['role']}\n\n{code_block(message['content'])}"
+            for idx, message in enumerate(formatted_messages, start=1)
+        )
+        formatted_conversation_output = mo.md(
+            f"""
+        ## Formatted conversation
+
+        **Conversation id:** `{conversation_id}`
+
+        {rendered}
+        """
+        )
+    else:
+        formatted_conversation_output = mo.md(
+            "_No chat turns yet. Send a message above to build the transcript._"
+        )
+
+    formatted_conversation_output
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md("""
+    ## 5. End and save
+
+    Click this once you are finished with the chat. It writes the full
+    system/user/assistant conversation to a single JSON file.
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    save_conversation = mo.ui.run_button(
+        label="End conversation and save JSON",
+        kind="success",
+    )
+    save_conversation
+    return (save_conversation,)
+
+
+@app.cell
+def _(
+    DATASET_ID,
+    RESULTS_ROOT,
+    SPLIT,
+    chat,
+    config_name,
+    conversation_id,
+    datetime,
+    ds_slug,
+    git_sha,
+    json,
+    mo,
+    model_params,
+    rendered_system_prompt,
+    save_conversation,
     selected_row,
     selected_row_idx,
     system_template,
     timezone,
     use_cache,
-    user_template,
 ):
-    mo.stop(not run.value, mo.md("_Click **Run** to send the rendered prompt._"))
     mo.stop(
-        not api_key,
-        mo.md(
-            "**`OPENROUTER_API_KEY` not set.** Export it or add it to `mask/mask/.env`."
-        ),
+        not save_conversation.value,
+        mo.md("_Use the chat above, then click **End conversation and save JSON**._"),
     )
 
-    started_at = datetime.now(timezone.utc)
-    cache_dir = CACHE_ROOT if use_cache.value else None
+    _history = [chat_message_to_dict(message) for message in chat.value]
+    mo.stop(not _history, mo.md("**No chat messages to save yet.**"))
 
-    async with OpenRouterClient(api_key) as client:
-        result = await client.chat(
-            model=model_id_value,
-            messages=messages,
-            temperature=model_params["temperature"],
-            max_tokens=model_params["max_tokens"],
-            cache_dir=cache_dir,
-            seed=seed_value,
-        )
-
-    ended_at = datetime.now(timezone.utc)
-    usage = (result.raw or {}).get("usage") or {}
-    log_path = RESULTS_ROOT / "openrouter_playground" / f"{ds_slug}.jsonl"
+    saved_at = datetime.now(timezone.utc)
+    conversation_messages = [
+        {"role": "system", "content": rendered_system_prompt},
+        *_history,
+    ]
     record = {
-        "timestamp": started_at.isoformat(),
-        "ended_at": ended_at.isoformat(),
+        "saved_at": saved_at.isoformat(),
+        "mode": "chat",
+        "conversation_id": conversation_id,
         "dataset_id": DATASET_ID,
         "config": config_name,
         "split": SPLIT,
@@ -360,55 +481,28 @@ async def _(
         "row": jsonable(selected_row),
         "prompt_templates": {
             "system": system_template.value,
-            "user": user_template.value,
         },
-        "messages": messages,
         "model_params": {**model_params, "use_cache": use_cache.value},
-        "response": result.text,
-        "finish_reason": result.finish_reason,
-        "latency_ms": result.latency_ms,
-        "prompt_tokens": result.prompt_tokens,
-        "completion_tokens": result.completion_tokens,
-        "total_tokens": usage.get("total_tokens"),
-        "cost_usd": result.cost_usd,
-        "cached": result.cached,
-        "error": result.error,
-        "raw_usage": usage,
+        "messages": conversation_messages,
         "git_sha": git_sha(),
     }
-    append_jsonl(log_path, record, json)
 
-    cost = "unknown" if result.cost_usd is None else f"{result.cost_usd:.8f}"
-    output = result.text if result.text else f"[ERROR: {result.error}]"
+    save_dir = RESULTS_ROOT / "openrouter_playground" / "conversations"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = (
+        save_dir
+        / f"{ds_slug}__row-{selected_row_idx}__{saved_at.strftime('%Y%m%d-%H%M%S')}.json"
+    )
+    save_path.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str))
+
     mo.md(
         f"""
-        ## OpenRouter output
+        **Saved conversation JSON:** `{save_path}`
 
-        **Model:** `{model_id_value}`  
-        **Row:** `{selected_row_idx}`  
-        **Finish reason:** `{result.finish_reason}`  
-        **Latency:** `{result.latency_ms} ms`  
-        **Prompt tokens:** `{result.prompt_tokens}`  
-        **Completion tokens:** `{result.completion_tokens}`  
-        **Total tokens:** `{usage.get("total_tokens")}`  
-        **Cost:** `{cost}`  
-        **Cached:** `{result.cached}`  
-        **Saved:** `{log_path}`
-
-        **system**
-
-        {code_block(rendered_system_prompt)}
-
-        **user**
-
-        {code_block(rendered_user_prompt)}
-
-        **assistant**
-
-        {code_block(output)}
+        **Messages saved:** `{len(conversation_messages)}`
         """
     )
-    return log_path, record, result
+    return
 
 
 if __name__ == "__main__":

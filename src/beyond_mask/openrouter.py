@@ -35,6 +35,7 @@ def _cache_key(
     temperature: float,
     max_tokens: int,
     seed: int | None,
+    session_id: str | None,
     response_format: dict | None,
 ) -> str:
     payload = json.dumps(
@@ -44,6 +45,7 @@ def _cache_key(
             "temperature": temperature,
             "max_tokens": max_tokens,
             "seed": seed,
+            "session_id": session_id,
             "response_format": response_format,
         },
         sort_keys=True,
@@ -133,11 +135,12 @@ class OpenRouterClient:
         max_tokens: int,
         cache_dir: Path | None,
         seed: int | None = None,
+        session_id: str | None = None,
         response_format: dict | None = None,
     ) -> ChatResult:
         cache_path: Path | None = None
         if cache_dir is not None:
-            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, seed, response_format)}.json"
+            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, seed, session_id, response_format)}.json"
             hit = _load_cached(cache_path)
             if hit is not None:
                 return hit
@@ -150,6 +153,8 @@ class OpenRouterClient:
         }
         if seed is not None:
             body["seed"] = seed
+        if session_id is not None:
+            body["session_id"] = session_id
         if response_format is not None:
             body["response_format"] = response_format
 
