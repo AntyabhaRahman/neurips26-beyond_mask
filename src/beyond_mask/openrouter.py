@@ -34,6 +34,7 @@ def _cache_key(
     messages: list[dict],
     temperature: float,
     max_tokens: int,
+    seed: int | None,
     response_format: dict | None,
 ) -> str:
     payload = json.dumps(
@@ -42,6 +43,7 @@ def _cache_key(
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
+            "seed": seed,
             "response_format": response_format,
         },
         sort_keys=True,
@@ -99,6 +101,7 @@ class OpenRouterClient:
         timeout: float = 60.0,
         referer: str = "https://github.com/anthropics/neurips26-beyond_mask",
         title: str = "neurips26-beyond_mask",
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self._client = httpx.AsyncClient(
             base_url=base_url,
@@ -108,6 +111,7 @@ class OpenRouterClient:
                 "X-Title": title,
             },
             timeout=timeout,
+            transport=transport,
         )
         self._sem = asyncio.Semaphore(concurrency)
 
@@ -128,11 +132,12 @@ class OpenRouterClient:
         temperature: float,
         max_tokens: int,
         cache_dir: Path | None,
+        seed: int | None = None,
         response_format: dict | None = None,
     ) -> ChatResult:
         cache_path: Path | None = None
         if cache_dir is not None:
-            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, response_format)}.json"
+            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, seed, response_format)}.json"
             hit = _load_cached(cache_path)
             if hit is not None:
                 return hit
@@ -142,8 +147,9 @@ class OpenRouterClient:
             "messages": messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
-            "usage": {"include": True},
         }
+        if seed is not None:
+            body["seed"] = seed
         if response_format is not None:
             body["response_format"] = response_format
 
