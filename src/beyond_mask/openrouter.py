@@ -23,9 +23,14 @@ class ChatResult:
     completion_tokens: int | None
     cost_usd: float | None
     finish_reason: str | None
+    native_finish_reason: str | None
     latency_ms: int
     cached: bool
     error: str | None
+    message: dict | None = None
+    reasoning: str | None = None
+    reasoning_details: list[dict] | None = None
+    reasoning_tokens: int | None = None
     raw: dict | None = None
 
 
@@ -36,6 +41,7 @@ def _cache_key(
     max_tokens: int,
     seed: int | None,
     session_id: str | None,
+    reasoning: dict | None,
     response_format: dict | None,
 ) -> str:
     payload = json.dumps(
@@ -46,6 +52,7 @@ def _cache_key(
             "max_tokens": max_tokens,
             "seed": seed,
             "session_id": session_id,
+            "reasoning": reasoning,
             "response_format": response_format,
         },
         sort_keys=True,
@@ -67,9 +74,14 @@ def _load_cached(path: Path) -> ChatResult | None:
         completion_tokens=data.get("completion_tokens"),
         cost_usd=data.get("cost_usd"),
         finish_reason=data.get("finish_reason"),
+        native_finish_reason=data.get("native_finish_reason"),
         latency_ms=0,
         cached=True,
         error=None,
+        message=data.get("message"),
+        reasoning=data.get("reasoning"),
+        reasoning_details=data.get("reasoning_details"),
+        reasoning_tokens=data.get("reasoning_tokens"),
         raw=data.get("raw"),
     )
 
@@ -91,6 +103,15 @@ def _parse_usage(usage: dict | None) -> tuple[int | None, int | None, float | No
         usage.get("completion_tokens"),
         usage.get("cost"),
     )
+
+
+def _parse_reasoning_tokens(usage: dict | None) -> int | None:
+    if not usage:
+        return None
+    completion_details = usage.get("completion_tokens_details")
+    if not isinstance(completion_details, dict):
+        return None
+    return completion_details.get("reasoning_tokens")
 
 
 class OpenRouterClient:
@@ -136,11 +157,12 @@ class OpenRouterClient:
         cache_dir: Path | None,
         seed: int | None = None,
         session_id: str | None = None,
+        reasoning: dict | None = None,
         response_format: dict | None = None,
     ) -> ChatResult:
         cache_path: Path | None = None
         if cache_dir is not None:
-            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, seed, session_id, response_format)}.json"
+            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, seed, session_id, reasoning, response_format)}.json"
             hit = _load_cached(cache_path)
             if hit is not None:
                 return hit
@@ -155,6 +177,8 @@ class OpenRouterClient:
             body["seed"] = seed
         if session_id is not None:
             body["session_id"] = session_id
+        if reasoning is not None:
+            body["reasoning"] = reasoning
         if response_format is not None:
             body["response_format"] = response_format
 
@@ -196,6 +220,7 @@ class OpenRouterClient:
                     completion_tokens=None,
                     cost_usd=None,
                     finish_reason=None,
+                    native_finish_reason=None,
                     latency_ms=0,
                     cached=False,
                     error=f"HTTP {response.status_code}: {snippet}",
@@ -211,9 +236,14 @@ class OpenRouterClient:
                 completion_tokens=completion_tokens,
                 cost_usd=cost_usd,
                 finish_reason=choice.get("finish_reason"),
+                native_finish_reason=choice.get("native_finish_reason"),
                 latency_ms=0,
                 cached=False,
                 error=None,
+                message=message,
+                reasoning=message.get("reasoning"),
+                reasoning_details=message.get("reasoning_details"),
+                reasoning_tokens=_parse_reasoning_tokens(data.get("usage")),
                 raw=data,
             )
 
@@ -223,6 +253,7 @@ class OpenRouterClient:
             completion_tokens=None,
             cost_usd=None,
             finish_reason=None,
+            native_finish_reason=None,
             latency_ms=0,
             cached=False,
             error=last_error or "exceeded retries",

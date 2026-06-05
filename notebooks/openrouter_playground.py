@@ -95,6 +95,55 @@ def jsonable(value):
 
 
 @app.function
+def stringify_value(value):
+    import json
+
+    if value is None:
+        return ""
+    if isinstance(value, dict | list | tuple):
+        return json.dumps(value, ensure_ascii=False, indent=2, default=str)
+    return str(value)
+
+
+@app.function
+def display_safe_value(value):
+    import html
+
+    return html.escape(stringify_value(value), quote=False)
+
+
+@app.function
+def display_safe_row(row):
+    return {key: display_safe_value(value) for key, value in row.items()}
+
+
+@app.function
+def extract_angle_symbols(value):
+    import re
+
+    if not isinstance(value, str):
+        return []
+
+    symbols = []
+    seen = set()
+    for match in re.finditer(r"</?[^<>\s]+[^<>]*>", value):
+        symbol = match.group(0)
+        if symbol not in seen:
+            symbols.append(symbol)
+            seen.add(symbol)
+    return symbols
+
+
+@app.function
+def extract_row_symbols(row):
+    return {
+        key: symbols
+        for key, value in row.items()
+        if (symbols := extract_angle_symbols(value))
+    }
+
+
+@app.function
 def template_fields(template):
     import string
 
@@ -103,6 +152,42 @@ def template_fields(template):
         if field_name:
             fields.add(field_name.split(".", 1)[0].split("[", 1)[0])
     return fields
+
+
+@app.function
+def trace_returned(turn_result):
+    return bool(
+        turn_result.get("reasoning")
+        or turn_result.get("reasoning_details")
+        or turn_result.get("reasoning_tokens")
+    )
+
+
+@app.function
+def chat_result_record(result):
+    return {
+        "text": result.text,
+        "finish_reason": result.finish_reason,
+        "native_finish_reason": result.native_finish_reason,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+        "reasoning_tokens": result.reasoning_tokens,
+        "cost_usd": result.cost_usd,
+        "latency_ms": result.latency_ms,
+        "cached": result.cached,
+        "error": result.error,
+        "message": jsonable(result.message),
+        "reasoning": result.reasoning,
+        "reasoning_details": jsonable(result.reasoning_details),
+        "trace_returned": trace_returned(
+            {
+                "reasoning": result.reasoning,
+                "reasoning_details": result.reasoning_details,
+                "reasoning_tokens": result.reasoning_tokens,
+            }
+        ),
+        "raw": jsonable(result.raw),
+    }
 
 
 @app.function
@@ -411,6 +496,46 @@ def _(chat, conversation_id, mo, rendered_system_prompt):
         )
 
     formatted_conversation_output
+    return
+
+
+@app.cell(hide_code=True)
+def _(json, mo, turn_results):
+    if turn_results:
+        sections = []
+        for turn_idx, result in sorted(turn_results.items(), key=lambda item: int(item[0])):
+            if trace_returned(result):
+                trace_parts = []
+                if result.get("reasoning"):
+                    trace_parts.append(
+                        "**reasoning**\n\n"
+                        f"{code_block(str(result['reasoning']))}"
+                    )
+                if result.get("reasoning_details"):
+                    trace_parts.append(
+                        "**reasoning_details**\n\n"
+                        f"{code_block(json.dumps(result['reasoning_details'], indent=2, ensure_ascii=False, default=str))}"
+                    )
+                if result.get("reasoning_tokens") is not None:
+                    trace_parts.append(
+                        f"**reasoning_tokens:** `{result['reasoning_tokens']}`"
+                    )
+                sections.append(
+                    f"### Assistant turn {turn_idx}\n\n" + "\n\n".join(trace_parts)
+                )
+            else:
+                sections.append(
+                    f"### Assistant turn {turn_idx}\n\n"
+                    "_No reasoning trace was returned by the selected model/provider for this turn._"
+                )
+        trace_output = mo.md("## Reasoning trace\n\n" + "\n\n".join(sections))
+    else:
+        trace_output = mo.md(
+            "## Reasoning trace\n\n"
+            "_No OpenRouter turns have completed yet._"
+        )
+
+    trace_output
     return
 
 
