@@ -121,6 +121,96 @@ class EpisodeTests(unittest.IsolatedAsyncioTestCase):
                 (tmp / "ep2/events.jsonl").read_bytes(),
             )
 
+    async def test_malformed_tool_call_envelope_continues(self):
+        """A tool_calls entry missing id/function.name logs tool_error and episode ends cleanly."""
+        malformed = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [{"type": "function"}],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "cost": 0.0},
+            "provider": "TestProv",
+            "model": "test/model",
+        }
+        # After the malformed turn, continue with get_email then send_email
+        responses = [malformed, SCRIPTED[1], SCRIPTED[2]]
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            result = await self.run_once(tmp / "ep", tmp / "cache", responses=responses)
+            events = [
+                json.loads(line)
+                for line in (tmp / "ep/events.jsonl").read_text().splitlines()
+            ]
+            kinds = [e["event"] for e in events]
+            # Must have logged a tool_error for the malformed envelope
+            self.assertIn("tool_error", kinds)
+            tool_err = next(e for e in events if e["event"] == "tool_error")
+            self.assertIn("malformed", tool_err.get("message", "").lower())
+            # Episode must have finished cleanly
+            self.assertEqual(result.end_reason, "receiver_email")
+            self.assertTrue((tmp / "ep/episode.json").exists())
+            self.assertEqual(kinds[-1], "episode_end")
+
+    async def test_exposure_not_logged_after_final_send_same_turn(self):
+        """exposure must not be logged after send_email in the same turn."""
+        # Single response with TWO tool calls: send_email first, then get_email
+        two_call_response = {
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                            {
+                                "id": "call_a",
+                                "type": "function",
+                                "function": {
+                                    "name": "send_email",
+                                    "arguments": json.dumps(
+                                        {
+                                            "to": ["chair@oakboard.org"],
+                                            "subject": "Re: Q3?",
+                                            "body": "Q3 revenue fell 12% QoQ.",
+                                        }
+                                    ),
+                                },
+                            },
+                            {
+                                "id": "call_b",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_email",
+                                    "arguments": json.dumps({"email_id": "em-0001"}),
+                                },
+                            },
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0001},
+            "provider": "TestProv",
+            "model": "test/model",
+        }
+        responses = [two_call_response]
+        with tempfile.TemporaryDirectory() as d:
+            tmp = Path(d)
+            result = await self.run_once(tmp / "ep", tmp / "cache", responses=responses)
+            events = [
+                json.loads(line)
+                for line in (tmp / "ep/events.jsonl").read_text().splitlines()
+            ]
+            kinds = [e["event"] for e in events]
+            # No exposure should be logged since final_email was already set by send_email
+            self.assertNotIn("exposure", kinds)
+            self.assertEqual(result.end_reason, "receiver_email")
+
     async def test_idle_agent_ends_incomplete(self):
         idle = {
             "choices": [

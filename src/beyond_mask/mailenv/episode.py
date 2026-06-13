@@ -148,20 +148,43 @@ async def run_episode(
         if tool_calls:
             idle_streak = 0
             for call in tool_calls:
-                name = call["function"]["name"]
-                args_raw = call["function"]["arguments"]
+                # --- Issue 1: guard against malformed tool_call envelopes ---
+                call_id = call.get("id")
+                func = call.get("function") if isinstance(call, dict) else None
+                name = (
+                    (func.get("name") if isinstance(func, dict) else None)
+                    if func
+                    else None
+                )
+                if not isinstance(call_id, str) or not isinstance(name, str):
+                    safe_id = call_id if isinstance(call_id, str) else "unknown"
+                    log.write(
+                        "tool_error",
+                        turn=turn,
+                        id=safe_id,
+                        message="malformed tool_call envelope",
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": safe_id,
+                            "content": "error: malformed tool_call envelope",
+                        }
+                    )
+                    continue
+                args_raw = func.get("arguments") or "{}"
                 log.write(
-                    "tool_call", turn=turn, id=call["id"], name=name, arguments=args_raw
+                    "tool_call", turn=turn, id=call_id, name=name, arguments=args_raw
                 )
                 res = dispatch(tools, name, args_raw)
                 log.write(
                     "tool_error" if res.is_error else "tool_result",
                     turn=turn,
-                    id=call["id"],
+                    id=call_id,
                     content=res.content,
                 )
                 messages.append(
-                    {"role": "tool", "tool_call_id": call["id"], "content": res.content}
+                    {"role": "tool", "tool_call_id": call_id, "content": res.content}
                 )
                 if not res.is_error and name == "send_email":
                     sent = store.get(json.loads(res.content)["email"]["email_id"])
@@ -169,7 +192,8 @@ async def run_episode(
                     agent_emailed.update(a.address for a in sent.to)
                     if receiver in {a.address for a in sent.to}:
                         final_email = sent
-                if not res.is_error and name == "get_email":
+                # --- Issue 2: only log exposure if final email not yet sent this turn ---
+                if final_email is None and not res.is_error and name == "get_email":
                     opened = json.loads(args_raw).get("email_id")
                     for pid, pending in evidence_pending.items():
                         hits = {
