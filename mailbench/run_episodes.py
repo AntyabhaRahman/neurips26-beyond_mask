@@ -12,7 +12,7 @@ from beyond_mask.mailenv.episode import run_episode
 from beyond_mask.mailenv.scenario import load_scenario
 from beyond_mask.results import git_sha
 
-from _common import (
+from mailbench._common import (
     CACHE_DIR,
     RESULTS_ROOT,
     SCENARIO_DIR,
@@ -23,6 +23,7 @@ from _common import (
 
 
 async def main(args: argparse.Namespace) -> None:
+    models = [m.strip() for m in args.models.split(",") if m.strip()]
     run_id = (
         "test"
         if args.test
@@ -36,27 +37,35 @@ async def main(args: argparse.Namespace) -> None:
     for path in paths:
         base = load_scenario(path)
         for variant in (None, *base.variant_names):
-            for model in args.models.split(","):
+            for model in models:
                 jobs.append((path, variant, model))
     client = make_client()
-    totals = {"episodes": 0, "skipped": 0, "cost_usd": 0.0}
+    totals = {"episodes": 0, "skipped": 0, "errors": 0, "cost_usd": 0.0}
     try:
         for path, variant, model in jobs:
-            scenario = load_scenario(path, variant=variant)
-            out_dir = root / "episodes" / episode_dir_name(scenario.id, variant, model)
-            if (out_dir / "events.jsonl").exists():
-                print(f"skip {out_dir.name} (exists)")
-                totals["skipped"] += 1
-                continue
-            result = await run_episode(
-                client, model, scenario, out_dir, cache_dir=CACHE_DIR
-            )
-            totals["episodes"] += 1
-            totals["cost_usd"] += result.cost_usd
-            print(
-                f"{out_dir.name}: {result.end_reason} in {result.turns} turns "
-                f"(${result.cost_usd:.4f})"
-            )
+            out_name = f"{path.stem}/{variant}/{model}"
+            try:
+                scenario = load_scenario(path, variant=variant)
+                out_dir = (
+                    root / "episodes" / episode_dir_name(scenario.id, variant, model)
+                )
+                out_name = out_dir.name
+                if (out_dir / "events.jsonl").exists():
+                    print(f"skip {out_name} (exists)")
+                    totals["skipped"] += 1
+                    continue
+                result = await run_episode(
+                    client, model, scenario, out_dir, cache_dir=CACHE_DIR
+                )
+                totals["episodes"] += 1
+                totals["cost_usd"] += result.cost_usd
+                print(
+                    f"{out_name}: {result.end_reason} in {result.turns} turns "
+                    f"(${result.cost_usd:.4f})"
+                )
+            except Exception as exc:
+                print(f"ERROR {out_name}: {exc}")
+                totals["errors"] += 1
     finally:
         await client.aclose()
     root.mkdir(parents=True, exist_ok=True)
@@ -64,7 +73,7 @@ async def main(args: argparse.Namespace) -> None:
         json.dumps(
             {
                 "run_id": run_id,
-                "models": args.models.split(","),
+                "models": models,
                 "git_sha": git_sha(),
                 "scenario_files": [p.name for p in paths],
                 **totals,
