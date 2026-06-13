@@ -238,5 +238,100 @@ class OpenRouterClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(calls), 2)
 
 
+class OpenRouterToolCallingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_chat_sends_tools_and_parallel_flag(self):
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured.update(json.loads(request.content))
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "list_emails",
+                                            "arguments": "{}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "cost": 0.0,
+                    },
+                },
+            )
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_emails",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ]
+        async with OpenRouterClient(
+            api_key="k", transport=httpx.MockTransport(handler)
+        ) as client:
+            result = await client.chat(
+                "m",
+                [{"role": "user", "content": "hi"}],
+                temperature=0.0,
+                max_tokens=10,
+                cache_dir=None,
+                tools=tools,
+                parallel_tool_calls=False,
+            )
+        self.assertEqual(captured["tools"], tools)
+        self.assertIs(captured["parallel_tool_calls"], False)
+        self.assertEqual(
+            result.message["tool_calls"][0]["function"]["name"], "list_emails"
+        )
+        self.assertEqual(result.finish_reason, "tool_calls")
+
+    def test_cache_key_unchanged_for_tool_less_calls(self):
+        from beyond_mask.openrouter import _cache_key
+
+        legacy = _cache_key(
+            "m", [{"role": "user", "content": "x"}], 0.0, 10, None, None, None, None
+        )
+        with_defaults = _cache_key(
+            "m",
+            [{"role": "user", "content": "x"}],
+            0.0,
+            10,
+            None,
+            None,
+            None,
+            None,
+            tools=None,
+            tool_choice=None,
+            parallel_tool_calls=None,
+        )
+        self.assertEqual(legacy, with_defaults)
+
+    def test_cache_key_differs_when_tools_present(self):
+        from beyond_mask.openrouter import _cache_key
+
+        base = _cache_key("m", [], 0.0, 10, None, None, None, None)
+        with_tools = _cache_key(
+            "m", [], 0.0, 10, None, None, None, None, tools=[{"type": "function"}]
+        )
+        self.assertNotEqual(base, with_tools)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -43,21 +43,30 @@ def _cache_key(
     session_id: str | None,
     reasoning: dict | None,
     response_format: dict | None,
+    *,
+    tools: list[dict] | None = None,
+    tool_choice: str | dict | None = None,
+    parallel_tool_calls: bool | None = None,
 ) -> str:
-    payload = json.dumps(
-        {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "seed": seed,
-            "session_id": session_id,
-            "reasoning": reasoning,
-            "response_format": response_format,
-        },
-        sort_keys=True,
-        ensure_ascii=False,
-    ).encode("utf-8")
+    payload_dict: dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "seed": seed,
+        "session_id": session_id,
+        "reasoning": reasoning,
+        "response_format": response_format,
+    }
+    if tools is not None:
+        payload_dict["tools"] = tools
+    if tool_choice is not None:
+        payload_dict["tool_choice"] = tool_choice
+    if parallel_tool_calls is not None:
+        payload_dict["parallel_tool_calls"] = parallel_tool_calls
+    payload = json.dumps(payload_dict, sort_keys=True, ensure_ascii=False).encode(
+        "utf-8"
+    )
     return hashlib.sha256(payload).hexdigest()
 
 
@@ -159,10 +168,16 @@ class OpenRouterClient:
         session_id: str | None = None,
         reasoning: dict | None = None,
         response_format: dict | None = None,
+        tools: list[dict] | None = None,
+        tool_choice: str | dict | None = None,
+        parallel_tool_calls: bool | None = None,
     ) -> ChatResult:
         cache_path: Path | None = None
         if cache_dir is not None:
-            cache_path = cache_dir / f"{_cache_key(model, messages, temperature, max_tokens, seed, session_id, reasoning, response_format)}.json"
+            cache_path = (
+                cache_dir
+                / f"{_cache_key(model, messages, temperature, max_tokens, seed, session_id, reasoning, response_format, tools=tools, tool_choice=tool_choice, parallel_tool_calls=parallel_tool_calls)}.json"
+            )
             hit = _load_cached(cache_path)
             if hit is not None:
                 return hit
@@ -181,6 +196,12 @@ class OpenRouterClient:
             body["reasoning"] = reasoning
         if response_format is not None:
             body["response_format"] = response_format
+        if tools is not None:
+            body["tools"] = tools
+        if tool_choice is not None:
+            body["tool_choice"] = tool_choice
+        if parallel_tool_calls is not None:
+            body["parallel_tool_calls"] = parallel_tool_calls
 
         start = time.perf_counter()
         async with self._sem:
@@ -206,7 +227,11 @@ class OpenRouterClient:
             if response.status_code in RETRY_STATUSES and attempt < len(RETRY_DELAYS):
                 retry_after = response.headers.get("Retry-After")
                 try:
-                    delay = float(retry_after) if retry_after is not None else RETRY_DELAYS[attempt]
+                    delay = (
+                        float(retry_after)
+                        if retry_after is not None
+                        else RETRY_DELAYS[attempt]
+                    )
                 except ValueError:
                     delay = RETRY_DELAYS[attempt]
                 await asyncio.sleep(delay)
