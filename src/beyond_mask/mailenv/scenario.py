@@ -115,23 +115,52 @@ def _parse_email(raw: dict) -> ScenarioEmail:
 
 
 def _apply_variant(raw: dict, name: str) -> dict:
+    """Apply a named variant to a raw scenario dict.
+
+    NOTE: drops apply first, so set list indices refer to the post-drop script.
+    """
     variants = raw.get("variants") or {}
     if name not in variants:
         raise ScenarioError(f"unknown variant {name!r} (have: {sorted(variants)})")
     merged = copy.deepcopy(raw)
     spec = variants[name]
+
+    # Issue 2: wrap drop errors as ScenarioError
     for idx in sorted(spec.get("drop_script_steps", []), reverse=True):
-        del merged["script"][idx]
+        try:
+            del merged["script"][idx]
+        except (IndexError, KeyError, TypeError) as exc:
+            raise ScenarioError(
+                f"variant {name!r}: drop index {idx!r} does not resolve: {exc}"
+            ) from exc
+
     for dotted, value in (spec.get("set") or {}).items():
         node = merged
         parts = dotted.split(".")
-        for part in parts[:-1]:
-            node = node[int(part)] if isinstance(node, list) else node[part]
+        try:
+            for part in parts[:-1]:
+                node = node[int(part)] if isinstance(node, list) else node[part]
+        except (IndexError, KeyError, ValueError, TypeError) as exc:
+            raise ScenarioError(
+                f"variant {name!r}: path {dotted!r} does not resolve: {exc}"
+            ) from exc
+
         last = parts[-1]
-        if isinstance(node, list):
-            node[int(last)] = value
-        else:
-            node[last] = value
+        try:
+            if isinstance(node, list):
+                node[int(last)] = value
+            else:
+                # Issue 3: require the key to already exist to catch typos
+                if last not in node:
+                    raise ScenarioError(
+                        f"variant {name!r}: path {dotted!r} targets unknown key {last!r}"
+                    )
+                node[last] = value
+        except (IndexError, ValueError, TypeError) as exc:
+            raise ScenarioError(
+                f"variant {name!r}: path {dotted!r} does not resolve: {exc}"
+            ) from exc
+
     return merged
 
 
@@ -144,27 +173,70 @@ def parse_scenario(raw: dict, variant: str | None = None) -> Scenario:
         raw = _apply_variant(raw, variant)
     try:
         inbox = tuple(_parse_email(e) for e in raw["initial_inbox"])
-        steps = tuple(
-            ScriptStep(
-                Trigger(
-                    on_start="on_start" in s["trigger"],
-                    at_turn=s["trigger"].get("at_turn"),
-                    after_agent_email_to=s["trigger"].get("after_agent_email_to"),
-                ),
-                _parse_email(s["email"]),
+
+        # Issue 4: build ordered list of declared email ids for in_reply_to validation.
+        # Order: initial_inbox first (in order), then script emails (in list order,
+        # i.e. assumed firing order).
+        declared_ids: list[str] = [e.id for e in inbox if e.id is not None]
+
+        steps_raw = raw.get("script", [])
+        steps = []
+        for s in steps_raw:
+            email = _parse_email(s["email"])
+            # Validate in_reply_to before appending this email's id
+            ref = email.in_reply_to
+            if ref is not None and ref not in declared_ids:
+                raise ScenarioError(
+                    f"email replies to unknown or later id {ref!r} "
+                    f"(script steps are assumed listed in firing order)"
+                )
+            if email.id is not None:
+                declared_ids.append(email.id)
+            steps.append(
+                ScriptStep(
+                    # Issue 1: key presence alone is not enough; use .get() with False default
+                    Trigger(
+                        on_start=bool(s["trigger"].get("on_start", False)),
+                        at_turn=s["trigger"].get("at_turn"),
+                        after_agent_email_to=s["trigger"].get("after_agent_email_to"),
+                    ),
+                    email,
+                )
             )
-            for s in raw.get("script", [])
+        steps = tuple(steps)
+
+        end = EndCondition(
+            raw["end"]["agent_emails"], int(raw["end"].get("max_turns", 12))
         )
+
+        # Issue 5: at_turn must be strictly less than max_turns
+        for i, step in enumerate(steps):
+            t = step.trigger
+            if t.at_turn is not None and not (0 < t.at_turn < end.max_turns):
+                raise ScenarioError(
+                    f"script step {i}: at_turn={t.at_turn} must satisfy "
+                    f"0 < at_turn < max_turns ({end.max_turns})"
+                )
+
         props = []
         known_email_ids = {e.id for e in inbox if e.id}
         for p in raw["ground_truth"]:
             world = p.get("evidence") == "world_knowledge"
-            emails = tuple(p["evidence"]["emails"]) if not world else ()
-            bad = set(emails) - known_email_ids
-            if bad:
-                raise ScenarioError(
-                    f"proposition {p['id']}: unknown evidence emails {sorted(bad)}"
-                )
+            if not world:
+                evid = p["evidence"]["emails"]
+                # Issue 6: evidence emails must be a list, not a string
+                if not isinstance(evid, list):
+                    raise ScenarioError(
+                        f"proposition {p['id']}: evidence emails must be a list"
+                    )
+                emails = tuple(evid)
+                bad = set(emails) - known_email_ids
+                if bad:
+                    raise ScenarioError(
+                        f"proposition {p['id']}: unknown evidence emails {sorted(bad)}"
+                    )
+            else:
+                emails = ()
             props.append(Proposition(p["id"], p["proposition"], emails, world))
         beliefs = {k: tuple(v) for k, v in raw["belief_elicitation"].items()}
         bad_beliefs = set(beliefs) - {p.id for p in props}
@@ -188,9 +260,7 @@ def parse_scenario(raw: dict, variant: str | None = None) -> Scenario:
             script=steps,
             ground_truth=tuple(props),
             belief_elicitation=beliefs,
-            end=EndCondition(
-                raw["end"]["agent_emails"], int(raw["end"].get("max_turns", 12))
-            ),
+            end=end,
             pressure_kind=raw.get("pressure_kind", "unspecified"),
             variant=variant,
             variant_names=variant_names,

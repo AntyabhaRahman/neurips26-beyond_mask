@@ -1,5 +1,11 @@
+import copy
+import tempfile
 import unittest
-from beyond_mask.mailenv.scenario import ScenarioError, parse_scenario
+from pathlib import Path
+
+import yaml
+
+from beyond_mask.mailenv.scenario import ScenarioError, load_scenario, parse_scenario
 
 VALID = {
     "id": "q3_spin",
@@ -94,3 +100,94 @@ class ScenarioTests(unittest.TestCase):
         self.assertIn("What happened", nop.script[0].email_body)
         with self.assertRaises(ScenarioError):
             parse_scenario(VALID, variant="missing")
+
+    # --- Issue 1: on_start: False should not set trigger.on_start = True ---
+
+    def test_on_start_false_trigger_parses_as_false(self):
+        """A trigger dict with on_start: false must produce Trigger.on_start == False."""
+        raw = copy.deepcopy(VALID)
+        raw["script"][0]["trigger"] = {"on_start": False}
+        s = parse_scenario(raw)
+        self.assertFalse(s.script[0].trigger.on_start)
+
+    # --- Issue 2 & 3: Variant errors must raise ScenarioError ---
+
+    def test_variant_set_out_of_range_index_raises(self):
+        """set path with script index out of range must raise ScenarioError naming the variant."""
+        raw = copy.deepcopy(VALID)
+        raw["variants"]["bad_idx"] = {"set": {"script.9.email.body": "x"}}
+        with self.assertRaises(ScenarioError) as ctx:
+            parse_scenario(raw, variant="bad_idx")
+        self.assertIn("bad_idx", str(ctx.exception))
+
+    def test_variant_drop_out_of_range_raises(self):
+        """drop_script_steps with an out-of-range index must raise ScenarioError naming the variant."""
+        raw = copy.deepcopy(VALID)
+        raw["variants"]["bad_drop"] = {"drop_script_steps": [9]}
+        with self.assertRaises(ScenarioError) as ctx:
+            parse_scenario(raw, variant="bad_drop")
+        self.assertIn("bad_drop", str(ctx.exception))
+
+    def test_variant_set_typo_final_key_raises(self):
+        """set path targeting a non-existent dict key must raise ScenarioError."""
+        raw = copy.deepcopy(VALID)
+        # 'systemprompt' is a typo for 'system_prompt'
+        raw["variants"]["typo_key"] = {"set": {"agent.systemprompt": "oops"}}
+        with self.assertRaises(ScenarioError) as ctx:
+            parse_scenario(raw, variant="typo_key")
+        self.assertIn("typo_key", str(ctx.exception))
+
+    # --- Issue 4: in_reply_to references must be validated ---
+
+    def test_in_reply_to_unknown_id_raises(self):
+        """An email with in_reply_to referencing a non-existent id must raise ScenarioError."""
+        raw = copy.deepcopy(VALID)
+        raw["script"][0]["email"]["in_reply_to"] = "nonexistent"
+        with self.assertRaises(ScenarioError) as ctx:
+            parse_scenario(raw)
+        self.assertIn("nonexistent", str(ctx.exception))
+
+    def test_in_reply_to_valid_inbox_id_parses_ok(self):
+        """A script email replying to a declared inbox id ('facts') must parse without error."""
+        raw = copy.deepcopy(VALID)
+        raw["script"][0]["email"]["in_reply_to"] = "facts"
+        s = parse_scenario(raw)
+        self.assertEqual(s.script[0].email.in_reply_to, "facts")
+
+    # --- Issue 5: at_turn must be < max_turns ---
+
+    def test_at_turn_equal_to_max_turns_raises(self):
+        """A script step with at_turn == max_turns must raise ScenarioError."""
+        raw = copy.deepcopy(VALID)
+        # max_turns is 12; set at_turn = 12 (== max_turns, agent can never see it)
+        raw["script"][0]["trigger"] = {"at_turn": 12}
+        with self.assertRaises(ScenarioError) as ctx:
+            parse_scenario(raw)
+        self.assertIn("12", str(ctx.exception))
+
+    # --- Issue 6: evidence emails as string (not list) must raise ScenarioError ---
+
+    def test_evidence_emails_string_not_list_raises(self):
+        """evidence.emails must be a list; a string must raise ScenarioError with must-be-a-list message."""
+        raw = copy.deepcopy(VALID)
+        raw["ground_truth"][0]["evidence"] = {"emails": "facts"}
+        with self.assertRaises(ScenarioError) as ctx:
+            parse_scenario(raw)
+        msg = str(ctx.exception).lower()
+        self.assertIn("list", msg)
+
+    # --- load_scenario round-trip: YAML file, tz-aware base_time ---
+
+    def test_load_scenario_round_trip(self):
+        """load_scenario(path) must parse a YAML file and return the correct Scenario."""
+        with tempfile.NamedTemporaryFile(suffix=".yaml", mode="w", delete=False) as f:
+            yaml.safe_dump(VALID, f)
+            tmp_path = Path(f.name)
+        try:
+            s = load_scenario(tmp_path)
+            self.assertEqual(s.id, "q3_spin")
+            # base_time must be tz-aware (the Z suffix path)
+
+            self.assertIsNotNone(s.base_time.tzinfo)
+        finally:
+            tmp_path.unlink()

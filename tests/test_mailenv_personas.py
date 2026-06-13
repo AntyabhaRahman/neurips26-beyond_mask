@@ -25,3 +25,15 @@ class ScriptEngineTests(unittest.TestCase):
         self.assertEqual(eng.due(5, set()), [])
         self.assertEqual(len(eng.due(5, {"boss@x.y"})), 1)
         self.assertEqual(eng.due(6, {"boss@x.y"}), [])
+
+    def test_partial_multi_step_engine_not_exhausted_until_all_fire(self):
+        """exhausted must be False until every step has fired."""
+        eng = ScriptEngine([step(at_turn=1), step(at_turn=3)])
+        # Only first step fires at turn 1
+        fired = eng.due(1, set())
+        self.assertEqual(len(fired), 1)
+        self.assertFalse(eng.exhausted)
+        # Second step fires at turn 3
+        fired = eng.due(3, set())
+        self.assertEqual(len(fired), 1)
+        self.assertTrue(eng.exhausted)
