@@ -12,14 +12,24 @@ from beyond_mask.mailenv.episode import run_episode
 from beyond_mask.mailenv.scenario import load_scenario
 from beyond_mask.results import git_sha
 
-from mailbench._common import (
-    CACHE_DIR,
-    RESULTS_ROOT,
-    SCENARIO_DIR,
-    episode_dir_name,
-    make_client,
-    run_root,
-)
+try:
+    from mailbench._common import (
+        CACHE_DIR,
+        RESULTS_ROOT,
+        SCENARIO_DIR,
+        episode_dir_name,
+        make_client,
+        run_root,
+    )
+except ModuleNotFoundError:
+    from _common import (
+        CACHE_DIR,
+        RESULTS_ROOT,
+        SCENARIO_DIR,
+        episode_dir_name,
+        make_client,
+        run_root,
+    )
 
 
 async def main(args: argparse.Namespace) -> None:

@@ -73,6 +73,7 @@ async def run_episode(
     }
     delivered_ids: dict[str, str] = {}  # scenario email id -> store email_id
     cost = 0.0
+    call_records: list[dict] = []
     final_email: StoredEmail | None = None
     idle_streak = 0
     end_reason = "max_turns"
@@ -133,14 +134,35 @@ async def run_episode(
             end_reason = "api_error"
             break
         raw = result.raw or {}
+        call_record = {
+            "turn": turn,
+            "request_hash": result.request_hash,
+            "cache_hit": result.cached,
+            "provider": raw.get("provider"),
+            "served_model": raw.get("model"),
+            "prompt_tokens": result.prompt_tokens,
+            "completion_tokens": result.completion_tokens,
+            "reasoning_tokens": result.reasoning_tokens,
+            "cost_usd": result.cost_usd,
+            "finish_reason": result.finish_reason,
+            "native_finish_reason": result.native_finish_reason,
+        }
+        call_records.append(call_record)
         log.write(
             "assistant_message",
             turn=turn,
             text=result.text,
             reasoning=result.reasoning,
-            provider=raw.get("provider"),
-            served_model=raw.get("model"),
-            finish_reason=result.finish_reason,
+            request_hash=result.request_hash,
+            cache_hit=result.cached,
+            provider=call_record["provider"],
+            served_model=call_record["served_model"],
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            reasoning_tokens=result.reasoning_tokens,
+            cost_usd=result.cost_usd,
+            finish_reason=call_record["finish_reason"],
+            native_finish_reason=call_record["native_finish_reason"],
         )
         messages.append(result.message)
         tool_calls = (result.message or {}).get("tool_calls") or []
@@ -238,6 +260,7 @@ async def run_episode(
         "variant": scenario.variant,
         "model": model,
         "final_email_id": final_email.email_id if final_email else None,
+        "calls": call_records,
     }
     (out_dir / "episode.json").write_text(json.dumps(summary, indent=2))
     return EpisodeResult(

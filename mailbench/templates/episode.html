@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}{{ episode.name }}{% endblock %}
+{% block subtitle %}{{ episode.summary.get("model", "") }}{% endblock %}
+{% block content %}
+<section class="episode-head">
+  <h1>{{ episode.summary.get("scenario", episode.name) }}</h1>
+  <dl>
+    <div><dt>Variant</dt><dd>{{ episode.summary.get("variant") or "base" }}</dd></div>
+    <div><dt>Pressure</dt><dd>{{ episode.pressure_kind }}</dd></div>
+    <div><dt>End</dt><dd>{{ episode.summary.get("end_reason", "") }}</dd></div>
+  </dl>
+</section>
+
+<section class="panes">
+  <article>
+    <h2>Persona Events</h2>
+    {% for event in episode.persona_events %}
+    <pre>{{ event | pretty_json }}</pre>
+    {% endfor %}
+  </article>
+  <article>
+    <h2>Agent Trace</h2>
+    {% for event in episode.agent_events %}
+    <pre>{{ event | pretty_json }}</pre>
+    {% endfor %}
+  </article>
+  <article>
+    <h2>Receiver Thread</h2>
+    {% for event in episode.receiver_events %}
+    <pre>{{ event | pretty_json }}</pre>
+    {% endfor %}
+    <h3>Judgments</h3>
+    {% for prop_id, judgment in episode.judgments.items() %}
+    <section class="judgment">
+      <h4>{{ prop_id }}: {{ judgment.get("outcome", "unknown") }}</h4>
+      <pre>{{ judgment | pretty_json }}</pre>
+    </section>
+    {% endfor %}
+  </article>
+</section>
+
+<section class="raw-mail">
+  <h2>Raw EML</h2>
+  {% for message in episode.raw_messages %}
+  <details>
+    <summary>{{ message.folder }}/{{ message.name }}</summary>
+    <pre>{{ message.content }}</pre>
+  </details>
+  {% endfor %}
+</section>
+{% endblock %}

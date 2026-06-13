@@ -1,0 +1,178 @@
+:root {
+  color-scheme: light;
+  --bg: #f7f8f4;
+  --panel: #ffffff;
+  --ink: #20231f;
+  --muted: #66706a;
+  --line: #d7ddd5;
+  --accent: #0f6b5f;
+  --accent-soft: #d9ebe7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 15px;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+main {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  min-height: 56px;
+  padding: 0 24px;
+  background: #20332f;
+  color: #fff;
+}
+
+.brand {
+  font-weight: 700;
+}
+
+.subtle {
+  color: #c8d7d2;
+}
+
+.toolbar {
+  margin-bottom: 16px;
+}
+
+.toolbar input {
+  width: min(420px, 100%);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.episode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.episode-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.episode-card a {
+  display: block;
+  padding: 14px;
+}
+
+h1,
+h2,
+h3,
+h4,
+p {
+  margin-top: 0;
+}
+
+.episode-card h2 {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.episode-card p {
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chips span {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 3px 8px;
+  font-size: 12px;
+}
+
+.episode-head dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 0 0 20px;
+}
+
+.episode-head div {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--panel);
+}
+
+dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.panes {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.panes > article,
+.raw-mail {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0 0 12px;
+  padding: 10px;
+  background: #f1f4ef;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.raw-mail {
+  margin-top: 12px;
+}
+
+summary {
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+@media (max-width: 900px) {
+  .panes {
+    grid-template-columns: 1fr;
+  }
+}
+

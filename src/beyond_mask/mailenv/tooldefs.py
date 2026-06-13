@@ -35,6 +35,65 @@ def to_openrouter(defs: list[ToolDef]) -> list[dict]:
     ]
 
 
+def _type_matches(value: object, expected: str) -> bool:
+    if expected == "object":
+        return isinstance(value, dict)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "null":
+        return value is None
+    return True
+
+
+def _validate_value(value: object, schema: dict, path: str) -> str | None:
+    expected = schema.get("type")
+    if expected is not None:
+        expected_types = expected if isinstance(expected, list) else [expected]
+        if not any(_type_matches(value, t) for t in expected_types):
+            return f"{path} must be {expected}"
+    if "enum" in schema and value not in schema["enum"]:
+        return f"{path} must be one of {schema['enum']}"
+    if isinstance(value, list) and "items" in schema:
+        item_schema = schema["items"]
+        for i, item in enumerate(value):
+            err = _validate_value(item, item_schema, f"{path}[{i}]")
+            if err:
+                return err
+    if isinstance(value, dict):
+        err = _validate_schema(value, schema, path)
+        if err:
+            return err
+    return None
+
+
+def _validate_schema(args: object, schema: dict, path: str = "arguments") -> str | None:
+    if schema.get("type") == "object" and not isinstance(args, dict):
+        return f"{path} must be an object"
+    if not isinstance(args, dict):
+        return None
+
+    properties = schema.get("properties", {})
+    missing = [k for k in schema.get("required", []) if k not in args]
+    if missing:
+        return f"Missing required arguments: {missing}"
+    if schema.get("additionalProperties") is False:
+        extra = sorted(set(args) - set(properties))
+        if extra:
+            return f"Unexpected arguments: {extra}"
+    for key, value in args.items():
+        if key in properties:
+            err = _validate_value(value, properties[key], f"{path}.{key}")
+            if err:
+                return err
+    return None
+
+
 def dispatch(defs: list[ToolDef], name: str, arguments: str) -> ToolResult:
     tool = next((d for d in defs if d.name == name), None)
     if tool is None:
@@ -43,9 +102,9 @@ def dispatch(defs: list[ToolDef], name: str, arguments: str) -> ToolResult:
         args = json.loads(arguments or "{}")
     except json.JSONDecodeError as exc:
         return ToolResult(f"Invalid JSON arguments: {exc}", is_error=True)
-    missing = [k for k in tool.input_schema.get("required", []) if k not in args]
-    if missing:
-        return ToolResult(f"Missing required arguments: {missing}", is_error=True)
+    schema_error = _validate_schema(args, tool.input_schema)
+    if schema_error:
+        return ToolResult(schema_error, is_error=True)
     try:
         return tool.handler(args)
     except (KeyError, TypeError, ValueError) as exc:

@@ -1,0 +1,35 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(**/.env)",
+      "Edit(./.env)",
+      "Edit(**/.env)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Read|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *\"/.env\"|.env) echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\".env contains live API keys; access is blocked by a project hook\"}}' ;; esac"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(jq -r '.tool_input.file_path // empty'); case \"$f\" in *.py) uv run ruff format \"$f\" 2>/dev/null && uv run ruff check --fix \"$f\" 2>/dev/null ;; esac; true",
+            "statusMessage": "Running ruff on edited file"
+          }
+        ]
+      }
+    ]
+  }
+}

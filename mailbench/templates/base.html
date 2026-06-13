@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}mailbench{% endblock %}</title>
+  <link rel="stylesheet" href="{{ rel }}/static/site.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ rel }}/index.html">mailbench</a>
+    <span class="subtle">{% block subtitle %}{% endblock %}</span>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+  <script src="{{ rel }}/static/site.js"></script>
+</body>
+</html>
+

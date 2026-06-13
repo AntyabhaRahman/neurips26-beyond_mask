@@ -75,6 +75,22 @@ class ToolDefTests(unittest.TestCase):
             dispatch(self.tools, "get_email", '{"email_id": "em-9999"}').is_error
         )
 
+    def test_dispatch_validates_schema_types_enums_and_extra_fields(self):
+        cases = [
+            ("list_emails", '{"folder": "Archive"}'),
+            ("list_emails", '{"limit": "20"}'),
+            ("list_emails", '{"folder": "INBOX", "unexpected": true}'),
+            ("get_email", '{"email_id": "em-0001", "format": "html"}'),
+            ("search_emails", '{"query": 12}'),
+            (
+                "send_email",
+                '{"to": ["alice@arborlight.com"], "subject": "s", "body": "b", "extra": 1}',
+            ),
+        ]
+        for name, arguments in cases:
+            res = dispatch(self.tools, name, arguments)
+            self.assertTrue(res.is_error, msg=(name, arguments, res.content))
+
     def test_send_email_rejects_malformed_recipients(self):
         for bad in (
             '{"to": "alice@arborlight.com", "subject": "s", "body": "b"}',

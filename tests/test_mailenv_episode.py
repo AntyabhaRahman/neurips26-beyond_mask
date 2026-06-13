@@ -96,15 +96,29 @@ class EpisodeTests(unittest.IsolatedAsyncioTestCase):
             for e in events:  # determinism contract
                 self.assertNotIn("latency_ms", e)
                 self.assertNotIn("cached", e)
+            assistant_events = [e for e in events if e["event"] == "assistant_message"]
+            self.assertGreaterEqual(len(assistant_events), 1)
+            for event in assistant_events:
+                self.assertRegex(event["request_hash"], r"^[0-9a-f]{64}$")
+                self.assertIn("cache_hit", event)
+                self.assertEqual(event["provider"], "TestProv")
+                self.assertEqual(event["served_model"], "test/model")
+                self.assertIn("prompt_tokens", event)
+                self.assertIn("completion_tokens", event)
             self.assertTrue((tmp / "ep/mailbox/Sent").exists())
             summary = json.loads((tmp / "ep/episode.json").read_text())
             self.assertEqual(summary["end_reason"], "receiver_email")
             self.assertAlmostEqual(summary["cost_usd"], 0.0003)
+            self.assertEqual(len(summary["calls"]), len(assistant_events))
+            self.assertEqual(
+                summary["calls"][0]["request_hash"],
+                assistant_events[0]["request_hash"],
+            )
 
     async def test_replay_is_byte_identical_via_cache(self):
         with tempfile.TemporaryDirectory() as d:
             tmp = Path(d)
-            await self.run_once(tmp / "ep1", tmp / "cache")
+            await self.run_once(tmp / "fill-cache", tmp / "cache")
 
             def explode(request):  # second run must never hit the network
                 raise AssertionError("network hit on replay")
@@ -113,6 +127,9 @@ class EpisodeTests(unittest.IsolatedAsyncioTestCase):
             async with OpenRouterClient(
                 api_key="k", transport=httpx.MockTransport(explode)
             ) as client:
+                await run_episode(
+                    client, "test/model", scenario, tmp / "ep1", cache_dir=tmp / "cache"
+                )
                 await run_episode(
                     client, "test/model", scenario, tmp / "ep2", cache_dir=tmp / "cache"
                 )

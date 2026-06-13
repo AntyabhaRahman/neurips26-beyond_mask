@@ -22,10 +22,24 @@ TOP_LEVEL = {
     "pressure_kind",
     "variants",
 }
+AGENT_FIELDS = {"address", "name", "system_prompt"}
+EMAIL_FIELDS = {"id", "from", "subject", "body", "in_reply_to"}
+SCRIPT_FIELDS = {"trigger", "email"}
+TRIGGER_FIELDS = {"on_start", "at_turn", "after_agent_email_to"}
+GROUND_TRUTH_FIELDS = {"id", "proposition", "evidence"}
+EVIDENCE_FIELDS = {"emails"}
+END_FIELDS = {"agent_emails", "max_turns"}
+VARIANT_FIELDS = {"set", "drop_script_steps"}
 
 
 class ScenarioError(ValueError):
     pass
+
+
+def _reject_unknown(raw: dict, allowed: set[str], context: str) -> None:
+    unknown = set(raw) - allowed
+    if unknown:
+        raise ScenarioError(f"{context}: unknown fields {sorted(unknown)}")
 
 
 def _addr(raw: str) -> Address:
@@ -105,6 +119,7 @@ class Scenario:
 
 
 def _parse_email(raw: dict) -> ScenarioEmail:
+    _reject_unknown(raw, EMAIL_FIELDS, "email")
     return ScenarioEmail(
         id=raw.get("id"),
         sender=_addr(raw["from"]),
@@ -164,10 +179,42 @@ def _apply_variant(raw: dict, name: str) -> dict:
     return merged
 
 
+def _validate_variant_specs(variants: dict) -> None:
+    for name, spec in variants.items():
+        if not isinstance(spec, dict):
+            raise ScenarioError(f"variant {name!r}: spec must be an object")
+        _reject_unknown(spec, VARIANT_FIELDS, f"variant {name!r}")
+        if "set" in spec and not isinstance(spec["set"], dict):
+            raise ScenarioError(f"variant {name!r}: set must be an object")
+        if "drop_script_steps" in spec and not isinstance(
+            spec["drop_script_steps"], list
+        ):
+            raise ScenarioError(f"variant {name!r}: drop_script_steps must be a list")
+
+
+def _parse_trigger(raw: dict) -> Trigger:
+    _reject_unknown(raw, TRIGGER_FIELDS, "trigger")
+    active = [
+        bool(raw.get("on_start", False)),
+        raw.get("at_turn") is not None,
+        raw.get("after_agent_email_to") is not None,
+    ]
+    if sum(active) > 1:
+        raise ScenarioError("trigger must specify only one active condition")
+    return Trigger(
+        on_start=bool(raw.get("on_start", False)),
+        at_turn=raw.get("at_turn"),
+        after_agent_email_to=raw.get("after_agent_email_to"),
+    )
+
+
 def parse_scenario(raw: dict, variant: str | None = None) -> Scenario:
     unknown = set(raw) - TOP_LEVEL
     if unknown:
         raise ScenarioError(f"unknown fields: {sorted(unknown)}")
+    _reject_unknown(raw["agent"], AGENT_FIELDS, "agent")
+    _reject_unknown(raw["end"], END_FIELDS, "end")
+    _validate_variant_specs(raw.get("variants") or {})
     variant_names = tuple(sorted(raw.get("variants") or {}))
     if variant:
         raw = _apply_variant(raw, variant)
@@ -182,6 +229,7 @@ def parse_scenario(raw: dict, variant: str | None = None) -> Scenario:
         steps_raw = raw.get("script", [])
         steps = []
         for s in steps_raw:
+            _reject_unknown(s, SCRIPT_FIELDS, "script step")
             email = _parse_email(s["email"])
             # Validate in_reply_to before appending this email's id
             ref = email.in_reply_to
@@ -194,12 +242,7 @@ def parse_scenario(raw: dict, variant: str | None = None) -> Scenario:
                 declared_ids.append(email.id)
             steps.append(
                 ScriptStep(
-                    # Issue 1: key presence alone is not enough; use .get() with False default
-                    Trigger(
-                        on_start=bool(s["trigger"].get("on_start", False)),
-                        at_turn=s["trigger"].get("at_turn"),
-                        after_agent_email_to=s["trigger"].get("after_agent_email_to"),
-                    ),
+                    _parse_trigger(s["trigger"]),
                     email,
                 )
             )
@@ -221,8 +264,10 @@ def parse_scenario(raw: dict, variant: str | None = None) -> Scenario:
         props = []
         known_email_ids = {e.id for e in inbox if e.id}
         for p in raw["ground_truth"]:
+            _reject_unknown(p, GROUND_TRUTH_FIELDS, "ground_truth")
             world = p.get("evidence") == "world_knowledge"
             if not world:
+                _reject_unknown(p["evidence"], EVIDENCE_FIELDS, "evidence")
                 evid = p["evidence"]["emails"]
                 # Issue 6: evidence emails must be a list, not a string
                 if not isinstance(evid, list):

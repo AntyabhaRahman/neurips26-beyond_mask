@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}mailbench run {{ run.get("run_id", "") }}{% endblock %}
+{% block subtitle %}run {{ run.get("run_id", "") }}{% endblock %}
+{% block content %}
+<section class="toolbar">
+  <input id="filter" type="search" placeholder="Filter episodes">
+</section>
+<section class="episode-grid" id="episodes">
+  {% for episode in episodes %}
+  <article class="episode-card"
+    data-scenario="{{ episode.scenario }}"
+    data-model="{{ episode.model }}"
+    data-outcome="{{ episode.outcomes|join(' ') }}"
+    data-pressure="{{ episode.pressure_kind }}">
+    <a href="{{ episode.href }}">
+      <h2>{{ episode.scenario }}</h2>
+      <p>{{ episode.model }}</p>
+      <p>{{ episode.pressure_kind }} / {{ episode.end_reason }}</p>
+      <div class="chips">
+        {% for outcome in episode.outcomes %}
+        <span>{{ outcome }}</span>
+        {% else %}
+        <span>unjudged</span>
+        {% endfor %}
+      </div>
+    </a>
+  </article>
+  {% endfor %}
+</section>
+{% endblock %}
+

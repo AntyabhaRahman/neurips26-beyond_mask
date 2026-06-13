@@ -32,6 +32,7 @@ class ChatResult:
     reasoning_details: list[dict] | None = None
     reasoning_tokens: int | None = None
     raw: dict | None = None
+    request_hash: str | None = None
 
 
 def _cache_key(
@@ -70,6 +71,11 @@ def _cache_key(
     return hashlib.sha256(payload).hexdigest()
 
 
+def _request_hash(body: dict[str, Any]) -> str:
+    payload = json.dumps(body, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _load_cached(path: Path) -> ChatResult | None:
     if not path.exists():
         return None
@@ -92,6 +98,7 @@ def _load_cached(path: Path) -> ChatResult | None:
         reasoning_details=data.get("reasoning_details"),
         reasoning_tokens=data.get("reasoning_tokens"),
         raw=data.get("raw"),
+        request_hash=data.get("request_hash"),
     )
 
 
@@ -172,16 +179,6 @@ class OpenRouterClient:
         tool_choice: str | dict | None = None,
         parallel_tool_calls: bool | None = None,
     ) -> ChatResult:
-        cache_path: Path | None = None
-        if cache_dir is not None:
-            cache_path = (
-                cache_dir
-                / f"{_cache_key(model, messages, temperature, max_tokens, seed, session_id, reasoning, response_format, tools=tools, tool_choice=tool_choice, parallel_tool_calls=parallel_tool_calls)}.json"
-            )
-            hit = _load_cached(cache_path)
-            if hit is not None:
-                return hit
-
         body: dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -202,11 +199,34 @@ class OpenRouterClient:
             body["tool_choice"] = tool_choice
         if parallel_tool_calls is not None:
             body["parallel_tool_calls"] = parallel_tool_calls
+        request_hash = _request_hash(body)
+
+        cache_path: Path | None = None
+        if cache_dir is not None:
+            key = _cache_key(
+                model,
+                messages,
+                temperature,
+                max_tokens,
+                seed,
+                session_id,
+                reasoning,
+                response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                parallel_tool_calls=parallel_tool_calls,
+            )
+            cache_path = cache_dir / f"{key}.json"
+            hit = _load_cached(cache_path)
+            if hit is not None:
+                hit.request_hash = hit.request_hash or request_hash
+                return hit
 
         start = time.perf_counter()
         async with self._sem:
             result = await self._post_with_retries(body)
         result.latency_ms = int((time.perf_counter() - start) * 1000)
+        result.request_hash = request_hash
 
         if cache_path is not None and result.error is None:
             _store_cached(cache_path, result)

@@ -56,6 +56,7 @@ class OpenRouterClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.prompt_tokens, 4)
         self.assertEqual(result.completion_tokens, 1)
         self.assertEqual(result.cost_usd, 0.00001)
+        self.assertRegex(result.request_hash, r"^[0-9a-f]{64}$")
         self.assertEqual(captured["body"]["seed"], 42)
         self.assertNotIn("usage", captured["body"])
 

@@ -92,6 +92,33 @@ class ScenarioTests(unittest.TestCase):
             with self.assertRaises(ScenarioError):
                 parse_scenario(broken)
 
+    def test_rejects_nested_unknown_fields_and_ambiguous_triggers(self):
+        cases = []
+
+        raw = copy.deepcopy(VALID)
+        raw["agent"]["tone"] = "urgent"
+        cases.append(raw)
+
+        raw = copy.deepcopy(VALID)
+        raw["initial_inbox"][0]["unexpected"] = True
+        cases.append(raw)
+
+        raw = copy.deepcopy(VALID)
+        raw["script"][0]["email"]["unexpected"] = True
+        cases.append(raw)
+
+        raw = copy.deepcopy(VALID)
+        raw["script"][0]["trigger"] = {"on_start": True, "at_turn": 1}
+        cases.append(raw)
+
+        raw = copy.deepcopy(VALID)
+        raw["variants"]["bad_op"] = {"rename_script_steps": [0]}
+        cases.append(raw)
+
+        for broken in cases:
+            with self.assertRaises(ScenarioError):
+                parse_scenario(broken)
+
     def test_variant_set_and_drop(self):
         soft = parse_scenario(VALID, variant="soft")
         self.assertIn("kindly", soft.script[0].email_body)

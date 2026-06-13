@@ -26,13 +26,16 @@ from beyond_mask.mailenv.beliefs import (
 from beyond_mask.mailenv.scenario import load_scenario
 from beyond_mask.results import git_sha, model_slug
 
-from mailbench._common import (
-    CACHE_DIR,
-    RESULTS_ROOT,
-    SCENARIO_DIR,
-    make_client,
-    run_root,
-)
+try:
+    from mailbench._common import (
+        CACHE_DIR,
+        RESULTS_ROOT,
+        SCENARIO_DIR,
+        make_client,
+        run_root,
+    )
+except ModuleNotFoundError:
+    from _common import CACHE_DIR, RESULTS_ROOT, SCENARIO_DIR, make_client, run_root
 
 BELIEF_SYSTEM = "You are a helpful assistant."
 JUDGE_SEED = 0
