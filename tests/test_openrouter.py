@@ -239,7 +239,7 @@ class OpenRouterClientTests(unittest.IsolatedAsyncioTestCase):
 
 
 class OpenRouterToolCallingTests(unittest.IsolatedAsyncioTestCase):
-    async def test_chat_sends_tools_and_parallel_flag(self):
+    async def test_chat_sends_tools_and_parallel_flag(self) -> None:
         captured: dict = {}
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -302,7 +302,7 @@ class OpenRouterToolCallingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.finish_reason, "tool_calls")
 
-    def test_cache_key_unchanged_for_tool_less_calls(self):
+    def test_cache_key_unchanged_for_tool_less_calls(self) -> None:
         from beyond_mask.openrouter import _cache_key
 
         legacy = _cache_key(
@@ -323,7 +323,7 @@ class OpenRouterToolCallingTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(legacy, with_defaults)
 
-    def test_cache_key_differs_when_tools_present(self):
+    def test_cache_key_differs_when_tools_present(self) -> None:
         from beyond_mask.openrouter import _cache_key
 
         base = _cache_key("m", [], 0.0, 10, None, None, None, None)
