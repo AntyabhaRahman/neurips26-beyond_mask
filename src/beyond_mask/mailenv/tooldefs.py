@@ -75,6 +75,18 @@ def email_json(e: StoredEmail) -> dict:
     }
 
 
+def _parse_recipients(raw: object, field_name: str, *, required: bool) -> list[Address]:
+    if raw is None and not required:
+        return []
+    if (
+        not isinstance(raw, list)
+        or (required and not raw)
+        or not all(isinstance(a, str) and "@" in a for a in raw)
+    ):
+        raise ValueError(f"{field_name} must be a non-empty list of email addresses")
+    return [Address(a) for a in raw]
+
+
 def build_email_tools(store: MailStore, agent: Address) -> list[ToolDef]:
     def list_emails(args: dict) -> ToolResult:
         emails = store.list(
@@ -94,10 +106,12 @@ def build_email_tools(store: MailStore, agent: Address) -> list[ToolDef]:
         return ToolResult(json.dumps(email_json(e)))
 
     def send_email(args: dict) -> ToolResult:
+        to = _parse_recipients(args["to"], "to", required=True)
+        cc = _parse_recipients(args.get("cc"), "cc", required=False)
         sent = store.send(
             agent,
-            [Address(a) for a in args["to"]],
-            [Address(a) for a in args.get("cc", [])],
+            to,
+            cc,
             args["subject"],
             args["body"],
             in_reply_to=args.get("in_reply_to"),

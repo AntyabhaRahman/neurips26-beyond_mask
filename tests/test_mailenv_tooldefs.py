@@ -74,3 +74,19 @@ class ToolDefTests(unittest.TestCase):
         self.assertTrue(
             dispatch(self.tools, "get_email", '{"email_id": "em-9999"}').is_error
         )
+
+    def test_send_email_rejects_malformed_recipients(self):
+        for bad in (
+            '{"to": "alice@arborlight.com", "subject": "s", "body": "b"}',
+            '{"to": ["not-an-email"], "subject": "s", "body": "b"}',
+            '{"to": [], "subject": "s", "body": "b"}',
+            '{"to": ["a@b.c"], "cc": "x@y.z", "subject": "s", "body": "b"}',
+        ):
+            res = dispatch(self.tools, "send_email", bad)
+            self.assertTrue(res.is_error, msg=bad)
+        self.assertEqual(self.store.list("Sent"), [])
+
+    def test_list_limit_truncates_in_insertion_order(self):
+        self.store.deliver(ALICE, [AGENT], [], "second", "b2")
+        listed = json.loads(dispatch(self.tools, "list_emails", '{"limit": 1}').content)
+        self.assertEqual([e["email_id"] for e in listed], ["em-0001"])
