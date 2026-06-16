@@ -332,9 +332,6 @@ def _(mo, selected_row, system_template):
         key: "" if value is None else value for key, value in selected_row.items()
     }
     rendered_system_prompt = system_template.value.format_map(row_context)
-    messages = [
-        {"role": "system", "content": rendered_system_prompt},
-    ]
 
     mo.md(
         f"## Rendered prompt\n\n**system**\n\n{code_block(rendered_system_prompt)}\n\n"
@@ -461,7 +458,6 @@ def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
         "seed": seed_value,
         "reasoning": reasoning_param,
     }
-
     return model_id_value, model_params, seed_value
 
 
