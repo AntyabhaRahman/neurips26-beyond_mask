@@ -1,6 +1,6 @@
 import marimo
 
-__generated_with = "0.23.8"
+__generated_with = "0.23.9"
 app = marimo.App(width="full")
 
 
@@ -229,7 +229,7 @@ def _(mo):
 
     config = mo.ui.dropdown(
         options=ARCHETYPES,
-        value="statistics",
+        value="known_facts",
         label="MASK config",
         full_width=True,
     )
@@ -269,6 +269,7 @@ def _(ds, mo):
 @app.cell
 def _(ds, json, pl, row_index):
     selected_row_idx = int(row_index.value)
+
     selected_row = dict(ds[selected_row_idx])
 
     def preview_value(value):
@@ -336,9 +337,7 @@ def _(mo, selected_row, system_template):
     ]
 
     mo.md(
-        "## Rendered prompt\n\n"
-        "**system**\n\n"
-        f"{code_block(rendered_system_prompt)}\n\n"
+        f"## Rendered prompt\n\n**system**\n\n{code_block(rendered_system_prompt)}\n\n"
     )
     return (rendered_system_prompt,)
 
@@ -356,8 +355,48 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    model_id = mo.ui.text(
-        value="openai/gpt-5.4-mini",
+    # MODELS = [
+    #     "openai/gpt-5.4-mini",
+    #     "openai/gpt-5.4",
+    #     "openai/gpt-5.5",
+    #     "anthropic/claude-opus-4.8",
+    #     "anthropic/claude-opus-4.7",
+    #     "anthropic/claude-opus-4.6",
+    #     "anthropic/claude-sonnet-4.6",
+    #     "anthropic/claude-haiku-4.5",
+    #     "google/gemini-3.5-flash",
+    #     "google/gemini-3.1-pro-preview",
+    #     "deepseek/deepseek-v3.2",
+    #     "deepseek/deepseek-v4-pro",
+    #     "deepseek/deepseek-v4-flash",
+    #     "qwen/qwen3.7-plus",
+    #     "qwen/qwen3.7-max",
+    #     "moonshotai/kimi-k2.6",
+    #     "moonshotai/kimi-k2.5",
+    #     "minimax/minimax-m3",
+    #     "xiaomi/mimo-v2.5",
+    #     "xiaomi/mimo-v2.5-pro",
+    #     "x-ai/grok-4.3",
+    #     "z-ai/glm-5.1"
+    # ]
+
+    MODELS = [
+        "openai/gpt-5.4-mini",
+        "openai/gpt-5.4",
+        "openai/gpt-5.5",
+        "anthropic/claude-opus-4.8",
+        "anthropic/claude-opus-4.7",
+        "anthropic/claude-opus-4.6",
+        "anthropic/claude-sonnet-4.6",
+        "google/gemini-3.1-pro-preview",
+        "deepseek/deepseek-v4-pro",
+        "moonshotai/kimi-k2.6",
+        "x-ai/grok-4.3",
+    ]
+
+    model_id = mo.ui.dropdown(
+        options=MODELS,
+        value="anthropic/claude-opus-4.8",
         label="OpenRouter model id",
         full_width=True,
     )
@@ -372,7 +411,7 @@ def _(mo):
         start=1,
         stop=32768,
         step=1,
-        value=1024,
+        value=8192,
         label="Max tokens",
     )
     seed = mo.ui.text(
@@ -382,12 +421,23 @@ def _(mo):
     )
     use_cache = mo.ui.checkbox(value=True, label="Use disk cache")
 
-    mo.vstack([model_id, temperature, max_tokens, seed, use_cache])
-    return max_tokens, model_id, seed, temperature, use_cache
+    # Unified reasoning effort. OpenRouter normalizes this per provider: native
+    # effort for OpenAI/Grok, thinkingLevel for Gemini 3 (xhigh -> high), and a
+    # token budget (~fraction of max_tokens) for Anthropic. "none" disables it.
+    REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"]
+    reasoning_level = mo.ui.dropdown(
+        options=REASONING_LEVELS,
+        value="medium",
+        label="Reasoning effort",
+        full_width=True,
+    )
+
+    mo.vstack([model_id, temperature, max_tokens, seed, reasoning_level, use_cache])
+    return max_tokens, model_id, reasoning_level, seed, temperature, use_cache
 
 
 @app.cell
-def _(max_tokens, mo, model_id, seed, temperature):
+def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
     model_id_value = model_id.value.strip()
     mo.stop(not model_id_value, mo.md("**Model id is required.**"))
 
@@ -397,13 +447,40 @@ def _(max_tokens, mo, model_id, seed, temperature):
     except ValueError:
         mo.stop(True, mo.md("**Seed must be an integer or blank.**"))
 
+    def build_reasoning(level):
+        # One effort value for every provider; OpenRouter maps it to the right
+        # native control (thinkingLevel / token budget). "none" disables reasoning.
+        return {"effort": level}
+
+    reasoning_param = build_reasoning(reasoning_level.value)
+
     model_params = {
         "model": model_id_value,
         "temperature": float(temperature.value),
         "max_tokens": int(max_tokens.value),
         "seed": seed_value,
+        "reasoning": reasoning_param,
     }
+
     return model_id_value, model_params, seed_value
+
+
+@app.cell
+def _(model_id_value):
+    print(model_id_value)
+    return
+
+
+@app.cell
+def _(mo):
+    get_turn_results, set_turn_results = mo.state({})
+    return get_turn_results, set_turn_results
+
+
+@app.cell
+def _(get_turn_results):
+    turn_results = get_turn_results()
+    return (turn_results,)
 
 
 @app.cell(hide_code=True)
@@ -425,21 +502,26 @@ def _(
     OpenRouterClient,
     api_key,
     ds_slug,
+    get_turn_results,
     mo,
     model_id_value,
     model_params,
     rendered_system_prompt,
     seed_value,
     selected_row_idx,
+    set_turn_results,
     use_cache,
 ):
     conversation_id = f"{ds_slug}-row-{selected_row_idx}"
 
     async def openrouter_chat(chat_messages, config):
         if not api_key:
-            return "`OPENROUTER_API_KEY` not set. Export it or add it to `mask/mask/.env`."
+            return (
+                "`OPENROUTER_API_KEY` not set. Export it or add it to `mask/mask/.env`."
+            )
 
         history = [chat_message_to_dict(message) for message in chat_messages]
+        turn_idx = sum(1 for m in history if m.get("role") == "assistant") + 1
         outbound_messages = [
             {"role": "system", "content": rendered_system_prompt},
             *history,
@@ -455,8 +537,12 @@ def _(
                 cache_dir=cache_dir,
                 seed=seed_value,
                 session_id=conversation_id,
+                reasoning=model_params["reasoning"],
             )
 
+        set_turn_results(
+            {**get_turn_results(), str(turn_idx): chat_result_record(result)}
+        )
         return result.text if result.text else f"[ERROR: {result.error}]"
 
     chat = mo.ui.chat(
@@ -502,19 +588,54 @@ def _(chat, conversation_id, mo, rendered_system_prompt):
 @app.cell(hide_code=True)
 def _(json, mo, turn_results):
     if turn_results:
+
+        def _render_detail(detail):
+            if not isinstance(detail, dict):
+                return code_block(str(detail))
+            dtype = detail.get("type", "reasoning")
+            fmt = detail.get("format")
+            fmt_note = f" · format `{fmt}`" if fmt else ""
+            if dtype == "reasoning.summary":
+                banner = ""
+                if fmt == "anthropic-claude-v1":
+                    banner = (
+                        "> ⚠️ **Summarized reasoning** — Anthropic returns a condensed "
+                        "summary, not the full chain of thought.\n\n"
+                    )
+                return (
+                    f"**`reasoning.summary`**{fmt_note}\n\n"
+                    f"{banner}{code_block(str(detail.get('summary', '')))}"
+                )
+            if dtype == "reasoning.encrypted":
+                data = str(detail.get("data") or "")
+                return (
+                    f"**`reasoning.encrypted`**{fmt_note}\n\n"
+                    f"_[encrypted/redacted — {len(data)} chars, not human-readable]_"
+                )
+            if dtype == "reasoning.text":
+                sig_note = "\n\n_signed_ ✅" if detail.get("signature") else ""
+                return (
+                    f"**`reasoning.text`**{fmt_note}\n\n"
+                    f"{code_block(str(detail.get('text', '')))}{sig_note}"
+                )
+            return (
+                f"**`{dtype}`**{fmt_note}\n\n"
+                f"{code_block(json.dumps(detail, indent=2, ensure_ascii=False, default=str))}"
+            )
+
         sections = []
-        for turn_idx, result in sorted(turn_results.items(), key=lambda item: int(item[0])):
+        for turn_idx, result in sorted(
+            turn_results.items(), key=lambda item: int(item[0])
+        ):
             if trace_returned(result):
                 trace_parts = []
-                if result.get("reasoning"):
+                details = result.get("reasoning_details") or []
+                if details:
+                    trace_parts.append("\n\n".join(_render_detail(d) for d in details))
+                elif result.get("reasoning"):
+                    # Some providers only return the flat `reasoning` string.
                     trace_parts.append(
-                        "**reasoning**\n\n"
-                        f"{code_block(str(result['reasoning']))}"
-                    )
-                if result.get("reasoning_details"):
-                    trace_parts.append(
-                        "**reasoning_details**\n\n"
-                        f"{code_block(json.dumps(result['reasoning_details'], indent=2, ensure_ascii=False, default=str))}"
+                        "**reasoning**\n\n" + code_block(str(result["reasoning"]))
                     )
                 if result.get("reasoning_tokens") is not None:
                     trace_parts.append(
@@ -531,8 +652,7 @@ def _(json, mo, turn_results):
         trace_output = mo.md("## Reasoning trace\n\n" + "\n\n".join(sections))
     else:
         trace_output = mo.md(
-            "## Reasoning trace\n\n"
-            "_No OpenRouter turns have completed yet._"
+            "## Reasoning trace\n\n_No OpenRouter turns have completed yet._"
         )
 
     trace_output
@@ -580,6 +700,7 @@ def _(
     selected_row_idx,
     system_template,
     timezone,
+    turn_results,
     use_cache,
 ):
     mo.stop(
@@ -595,6 +716,11 @@ def _(
         {"role": "system", "content": rendered_system_prompt},
         *_history,
     ]
+    # Per-turn reasoning captured during the chat (drop the bulky raw payload).
+    reasoning_traces = {
+        turn_idx: {k: v for k, v in record_.items() if k != "raw"}
+        for turn_idx, record_ in turn_results.items()
+    }
     record = {
         "saved_at": saved_at.isoformat(),
         "mode": "chat",
@@ -609,6 +735,7 @@ def _(
         },
         "model_params": {**model_params, "use_cache": use_cache.value},
         "messages": conversation_messages,
+        "reasoning_traces": reasoning_traces,
         "git_sha": git_sha(),
     }
 
