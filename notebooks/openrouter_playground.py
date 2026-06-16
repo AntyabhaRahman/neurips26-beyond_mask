@@ -708,11 +708,30 @@ def _(
     mo.stop(not _history, mo.md("**No chat messages to save yet.**"))
 
     saved_at = datetime.now(timezone.utc)
+    # Inline each assistant turn's reasoning into the transcript (matched by turn
+    # index) so the saved messages are self-contained. The model-facing history is
+    # unchanged — reasoning is recorded here, not fed back to the model.
+    _assistant_seen = 0
+    _transcript = []
+    for _msg in _history:
+        if _msg.get("role") == "assistant":
+            _assistant_seen += 1
+            _rec = turn_results.get(str(_assistant_seen), {})
+            _transcript.append(
+                {
+                    **_msg,
+                    "reasoning": _rec.get("reasoning"),
+                    "reasoning_details": _rec.get("reasoning_details"),
+                    "reasoning_tokens": _rec.get("reasoning_tokens"),
+                }
+            )
+        else:
+            _transcript.append(_msg)
     conversation_messages = [
         {"role": "system", "content": rendered_system_prompt},
-        *_history,
+        *_transcript,
     ]
-    # Per-turn reasoning captured during the chat (drop the bulky raw payload).
+    # Per-turn reasoning + metadata captured during the chat (drop the bulky raw).
     reasoning_traces = {
         turn_idx: {k: v for k, v in record_.items() if k != "raw"}
         for turn_idx, record_ in turn_results.items()
@@ -750,6 +769,7 @@ def _(
         **Messages saved:** `{len(conversation_messages)}`
         """
     )
+
     return
 
 
