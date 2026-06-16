@@ -60,6 +60,42 @@ class OpenRouterClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(captured["body"]["seed"], 42)
         self.assertNotIn("usage", captured["body"])
 
+    async def test_chat_omits_max_tokens_when_none(self) -> None:
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "ok",
+                            },
+                        }
+                    ]
+                },
+            )
+
+        async with OpenRouterClient(
+            "test-key",
+            base_url="https://openrouter.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.chat(
+                "openai/test",
+                [{"role": "user", "content": "hello"}],
+                temperature=0.0,
+                max_tokens=None,
+                cache_dir=None,
+            )
+
+        self.assertEqual(result.text, "ok")
+        self.assertNotIn("max_tokens", captured["body"])
+
     async def test_chat_sends_multiturn_messages_and_session_id(self) -> None:
         captured: dict = {}
         messages = [
@@ -237,6 +273,134 @@ class OpenRouterClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(low.text, "low")
         self.assertEqual(high.text, "high")
         self.assertEqual(len(calls), 2)
+
+    async def test_chat_sends_service_tier_and_persists_returned_tier(self) -> None:
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = json.loads(request.content)
+            return httpx.Response(
+                200,
+                json={
+                    "service_tier": "flex",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": "flex ok",
+                            },
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 2,
+                        "completion_tokens": 3,
+                        "cost": 0.00004,
+                    },
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as cache_dir:
+            async with OpenRouterClient(
+                "test-key",
+                base_url="https://openrouter.test/api/v1",
+                transport=httpx.MockTransport(handler),
+            ) as client:
+                result = await client.chat(
+                    "openai/test",
+                    [{"role": "user", "content": "hello"}],
+                    temperature=0.0,
+                    max_tokens=8,
+                    cache_dir=Path(cache_dir),
+                    service_tier="flex",
+                )
+
+            cached_files = list(Path(cache_dir).glob("*.json"))
+            self.assertEqual(len(cached_files), 1)
+            cached_payload = json.loads(cached_files[0].read_text())
+
+        self.assertEqual(captured["body"]["service_tier"], "flex")
+        self.assertEqual(result.service_tier, "flex")
+        self.assertEqual(cached_payload["service_tier"], "flex")
+
+    async def test_service_tier_is_part_of_cache_key(self) -> None:
+        calls: list[dict] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            body = json.loads(request.content)
+            calls.append(body)
+            tier = body.get("service_tier") or "default"
+            return httpx.Response(
+                200,
+                json={
+                    "service_tier": tier,
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {
+                                "role": "assistant",
+                                "content": tier,
+                            },
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                },
+            )
+
+        transport = httpx.MockTransport(handler)
+        with tempfile.TemporaryDirectory() as cache_dir:
+            async with OpenRouterClient(
+                "test-key",
+                base_url="https://openrouter.test/api/v1",
+                transport=transport,
+            ) as client:
+                default = await client.chat(
+                    "openai/test",
+                    [{"role": "user", "content": "hello"}],
+                    temperature=0.0,
+                    max_tokens=8,
+                    cache_dir=Path(cache_dir),
+                )
+                flex = await client.chat(
+                    "openai/test",
+                    [{"role": "user", "content": "hello"}],
+                    temperature=0.0,
+                    max_tokens=8,
+                    cache_dir=Path(cache_dir),
+                    service_tier="flex",
+                )
+
+        self.assertEqual(default.text, "default")
+        self.assertEqual(flex.text, "flex")
+        self.assertEqual(len(calls), 2)
+
+    async def test_chat_returns_error_for_non_json_success_response(self) -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                text="<html>temporarily unavailable</html>",
+            )
+
+        async with OpenRouterClient(
+            "test-key",
+            base_url="https://openrouter.test/api/v1",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.chat(
+                "openai/test",
+                [{"role": "user", "content": "hello"}],
+                temperature=0.0,
+                max_tokens=8,
+                cache_dir=None,
+            )
+
+        self.assertEqual(result.text, "")
+        self.assertIsNotNone(result.error)
+        self.assertIn("Invalid JSON response", result.error)
 
 
 class OpenRouterToolCallingTests(unittest.IsolatedAsyncioTestCase):

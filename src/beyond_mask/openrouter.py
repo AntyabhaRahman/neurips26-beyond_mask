@@ -33,13 +33,14 @@ class ChatResult:
     reasoning_tokens: int | None = None
     raw: dict | None = None
     request_hash: str | None = None
+    service_tier: str | None = None
 
 
 def _cache_key(
     model: str,
     messages: list[dict],
     temperature: float,
-    max_tokens: int,
+    max_tokens: int | None,
     seed: int | None,
     session_id: str | None,
     reasoning: dict | None,
@@ -48,12 +49,12 @@ def _cache_key(
     tools: list[dict] | None = None,
     tool_choice: str | dict | None = None,
     parallel_tool_calls: bool | None = None,
+    service_tier: str | None = None,
 ) -> str:
     payload_dict: dict[str, Any] = {
         "model": model,
         "messages": messages,
         "temperature": temperature,
-        "max_tokens": max_tokens,
         "seed": seed,
         "session_id": session_id,
         "reasoning": reasoning,
@@ -65,6 +66,10 @@ def _cache_key(
         payload_dict["tool_choice"] = tool_choice
     if parallel_tool_calls is not None:
         payload_dict["parallel_tool_calls"] = parallel_tool_calls
+    if service_tier is not None:
+        payload_dict["service_tier"] = service_tier
+    if max_tokens is not None:
+        payload_dict["max_tokens"] = max_tokens
     payload = json.dumps(payload_dict, sort_keys=True, ensure_ascii=False).encode(
         "utf-8"
     )
@@ -99,6 +104,8 @@ def _load_cached(path: Path) -> ChatResult | None:
         reasoning_tokens=data.get("reasoning_tokens"),
         raw=data.get("raw"),
         request_hash=data.get("request_hash"),
+        service_tier=data.get("service_tier")
+        or (data.get("raw") or {}).get("service_tier"),
     )
 
 
@@ -169,7 +176,7 @@ class OpenRouterClient:
         messages: list[dict],
         *,
         temperature: float,
-        max_tokens: int,
+        max_tokens: int | None,
         cache_dir: Path | None,
         seed: int | None = None,
         session_id: str | None = None,
@@ -178,13 +185,15 @@ class OpenRouterClient:
         tools: list[dict] | None = None,
         tool_choice: str | dict | None = None,
         parallel_tool_calls: bool | None = None,
+        service_tier: str | None = None,
     ) -> ChatResult:
         body: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
+        if max_tokens is not None:
+            body["max_tokens"] = max_tokens
         if seed is not None:
             body["seed"] = seed
         if session_id is not None:
@@ -199,6 +208,8 @@ class OpenRouterClient:
             body["tool_choice"] = tool_choice
         if parallel_tool_calls is not None:
             body["parallel_tool_calls"] = parallel_tool_calls
+        if service_tier is not None:
+            body["service_tier"] = service_tier
         request_hash = _request_hash(body)
 
         cache_path: Path | None = None
@@ -215,6 +226,7 @@ class OpenRouterClient:
                 tools=tools,
                 tool_choice=tool_choice,
                 parallel_tool_calls=parallel_tool_calls,
+                service_tier=service_tier,
             )
             cache_path = cache_dir / f"{key}.json"
             hit = _load_cached(cache_path)
@@ -271,7 +283,21 @@ class OpenRouterClient:
                     error=f"HTTP {response.status_code}: {snippet}",
                 )
 
-            data = response.json()
+            try:
+                data = response.json()
+            except json.JSONDecodeError as exc:
+                snippet = response.text[:500]
+                return ChatResult(
+                    text="",
+                    prompt_tokens=None,
+                    completion_tokens=None,
+                    cost_usd=None,
+                    finish_reason=None,
+                    native_finish_reason=None,
+                    latency_ms=0,
+                    cached=False,
+                    error=f"Invalid JSON response: {exc}: {snippet}",
+                )
             choice = (data.get("choices") or [{}])[0]
             message = choice.get("message") or {}
             prompt_tokens, completion_tokens, cost_usd = _parse_usage(data.get("usage"))
@@ -290,6 +316,7 @@ class OpenRouterClient:
                 reasoning_details=message.get("reasoning_details"),
                 reasoning_tokens=_parse_reasoning_tokens(data.get("usage")),
                 raw=data,
+                service_tier=data.get("service_tier"),
             )
 
         return ChatResult(

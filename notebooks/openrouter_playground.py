@@ -23,9 +23,7 @@ def _():
     RESULTS_ROOT = PROJECT_ROOT / "results"
     MASK_DIR = PROJECT_ROOT / "mask"
     ENV_FILE = MASK_DIR / "mask" / ".env"
-    CACHE_ROOT = PROJECT_ROOT / ".cache" / "openrouter"
     return (
-        CACHE_ROOT,
         ENV_FILE,
         OpenRouterClient,
         RESULTS_ROOT,
@@ -416,8 +414,6 @@ def _(mo):
         label="Optional seed",
         full_width=True,
     )
-    use_cache = mo.ui.checkbox(value=True, label="Use disk cache")
-
     # Unified reasoning effort. OpenRouter normalizes this per provider: native
     # effort for OpenAI/Grok, thinkingLevel for Gemini 3 (xhigh -> high), and a
     # token budget (~fraction of max_tokens) for Anthropic. "none" disables it.
@@ -429,8 +425,8 @@ def _(mo):
         full_width=True,
     )
 
-    mo.vstack([model_id, temperature, max_tokens, seed, reasoning_level, use_cache])
-    return max_tokens, model_id, reasoning_level, seed, temperature, use_cache
+    mo.vstack([model_id, temperature, max_tokens, seed, reasoning_level])
+    return max_tokens, model_id, reasoning_level, seed, temperature
 
 
 @app.cell
@@ -494,7 +490,6 @@ def _(mo):
 
 @app.cell
 def _(
-    CACHE_ROOT,
     OpenRouterClient,
     api_key,
     ds_slug,
@@ -506,7 +501,6 @@ def _(
     seed_value,
     selected_row_idx,
     set_turn_results,
-    use_cache,
 ):
     conversation_id = f"{ds_slug}-row-{selected_row_idx}"
 
@@ -522,7 +516,7 @@ def _(
             {"role": "system", "content": rendered_system_prompt},
             *history,
         ]
-        cache_dir = CACHE_ROOT if use_cache.value else None
+        cache_dir = None  # always re-run; disk cache disabled
 
         async with OpenRouterClient(api_key) as client:
             result = await client.chat(
@@ -697,7 +691,6 @@ def _(
     system_template,
     timezone,
     turn_results,
-    use_cache,
 ):
     mo.stop(
         not save_conversation.value,
@@ -748,7 +741,7 @@ def _(
         "prompt_templates": {
             "system": system_template.value,
         },
-        "model_params": {**model_params, "use_cache": use_cache.value},
+        "model_params": model_params,
         "messages": conversation_messages,
         "reasoning_traces": reasoning_traces,
         "git_sha": git_sha(),
@@ -769,7 +762,6 @@ def _(
         **Messages saved:** `{len(conversation_messages)}`
         """
     )
-
     return
 
 
