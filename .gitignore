@@ -5,6 +5,7 @@ build/
 dist/
 wheels/
 *.egg-info
+notebooks/__marimo__/session/openrouter_playground.py.json
 
 # Virtual environments
 .venv

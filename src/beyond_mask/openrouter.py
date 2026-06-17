@@ -143,9 +143,9 @@ class OpenRouterClient:
         api_key: str,
         *,
         base_url: str = DEFAULT_BASE_URL,
-        concurrency: int = 8,
+        concurrency: int = 1,
         timeout: float = 60.0,
-        referer: str = "https://github.com/anthropics/neurips26-beyond_mask",
+        referer: str = "https://github.com/AntyabhaRahman/neurips26-beyond_mask",
         title: str = "neurips26-beyond_mask",
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
