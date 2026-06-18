@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//tmp/marimo-pair-6lk8e2ji/**)",
+      "Bash(find / -name \"execute-code.sh\")"
+    ]
+  }
+}
