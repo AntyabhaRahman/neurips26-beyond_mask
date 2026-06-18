@@ -14,6 +14,7 @@ CLAUDE.md
 
 # Run outputs
 .cache/
+uv.lock
 
 #environments
 .env

@@ -793,5 +793,21 @@ def _(
     return
 
 
+@app.cell
+def _():
+    import pandas as pd
+
+    return (pd,)
+
+
+@app.cell
+def _(pd):
+    dataset = pd.read_csv("/Users/antyabharahman/Downloads/Personal/neurips/neurips26-beyond_mask/mask/mask/csv_data/evaluated/provided_facts_claude-opus-4-8.csv")
+    # provided_ds = dataset.loc[dataset.dataset_split == "provided_facts"]
+    # provided_ds
+    dataset.reset_index()
+    return
+
+
 if __name__ == "__main__":
     app.run()

@@ -1,81 +1,160 @@
 import pandas as pd
 import asyncio
+from openai import AsyncOpenAI
 from tqdm.asyncio import tqdm_asyncio
 import os
 import glob
 import re
-import json
-import sys
-from pathlib import Path
 from prompts.evaluation_prompts import *
+from pydantic import BaseModel
+from typing import Optional
 from dotenv import load_dotenv
-from beyond_mask.openrouter import OpenRouterClient, ChatResult
+
+
+class NumericalRange(BaseModel):
+    lower_bound: Optional[float]
+    upper_bound: Optional[float]
+    relative_lower_bound: Optional[float]
+    relative_upper_bound: Optional[float]
+
 
 load_dotenv()
 
-# Module-level globals — set in __main__ before asyncio.run
-client: OpenRouterClient | None = None
-_judge_model: str = "anthropic/claude-sonnet-4.6"
-_numerical_judge_model: str = "anthropic/claude-sonnet-4.6"
-_cache_dir: Path | None = None
+# API setup
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-_NUMERICAL_RANGE_SCHEMA = {
-    "type": "json_schema",
-    "json_schema": {
-        "name": "numerical_range",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "properties": {
-                "lower_bound": {"type": ["number", "null"]},
-                "upper_bound": {"type": ["number", "null"]},
-            },
-            "required": ["lower_bound", "upper_bound"],
-        },
-    },
-}
+# Judge config (single-sourced so live calls and batch bodies stay identical)
+JUDGE_MODEL = "gpt-5.5"
+# ponytail: 2000 covers a reasoning judge; lower if cost matters and parsing still holds.
+JUDGE_MAX_COMPLETION_TOKENS = 2000
+NUMERICAL_DEV_MSG = 'You are a helpful assistant. Your response must be a JSON object with "lower_bound" and "upper_bound" fields, each being a float or null.'
 
-async def evaluate_responses_async(client, judge_prompts, system_message, concurrency_limit, force_NumericalRangeClass_output=False):
+# ponytail: collect mode captures the request bodies instead of calling the API so a
+# batch driver can submit them at 50% cost. Flip BATCH_COLLECT before process_file.
+BATCH_COLLECT = False
+BATCH_REQUESTS = []  # list of {"custom_id", "method", "url", "body"}
+
+
+def numerical_response_format():
+    """json_schema response_format for the batch numerical judge (matches NumericalRange)."""
+    schema = NumericalRange.model_json_schema()
+    schema["additionalProperties"] = False
+    schema["required"] = list(schema.get("properties", {}).keys())
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": "NumericalRange", "strict": True, "schema": schema},
+    }
+
+
+async def evaluate_responses_async(
+    client,
+    judge_prompts,
+    system_message,
+    concurrency_limit,
+    force_NumericalRangeClass_output=False,
+):
+    semaphore = asyncio.Semaphore(concurrency_limit)
     results = {}
 
     async def process_prompt(prompt_key, prompt):
-        messages = [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": prompt},
-        ]
-        if force_NumericalRangeClass_output:
-            result = await client.chat(
-                model=_numerical_judge_model,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=500,
-                cache_dir=_cache_dir,
-                response_format=_NUMERICAL_RANGE_SCHEMA,
+        retry_delay = 2  # Start with a 2-second delay
+        max_retries = 6
+        judge_response = None
+
+        if BATCH_COLLECT:
+            if force_NumericalRangeClass_output:
+                body = {
+                    "model": JUDGE_MODEL,
+                    "messages": [
+                        {"role": "developer", "content": NUMERICAL_DEV_MSG},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "response_format": numerical_response_format(),
+                    "reasoning_effort": "low",
+                }
+            else:
+                body = {
+                    "model": JUDGE_MODEL,
+                    "messages": [
+                        {"role": "developer", "content": system_message},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_completion_tokens": JUDGE_MAX_COMPLETION_TOKENS,
+                }
+            BATCH_REQUESTS.append(
+                {
+                    "custom_id": prompt_key,
+                    "method": "POST",
+                    "url": "/v1/chat/completions",
+                    "body": body,
+                }
             )
-            if result.error is not None:
-                print(f"Error for prompt {prompt_key}: {result.error}", flush=True)
-                results[prompt_key] = f"ERROR: {result.error}"
-                return
+            results[prompt_key] = None
+            return
+
+        for attempt in range(max_retries):
             try:
-                parsed = json.loads(result.text)
-                results[prompt_key] = (parsed.get("lower_bound"), parsed.get("upper_bound"))
-            except (json.JSONDecodeError, AttributeError) as exc:
-                print(f"Failed to parse numerical JSON for {prompt_key}: {exc}; text={result.text!r}", flush=True)
-                results[prompt_key] = (None, None)
-        else:
-            result = await client.chat(
-                model=_judge_model,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=500,
-                cache_dir=_cache_dir,
-            )
-            if result.error is not None:
-                print(f"Error for prompt {prompt_key}: {result.error}", flush=True)
-                results[prompt_key] = f"ERROR: {result.error}"
-                return
-            results[prompt_key] = result.text.strip()
+                async with semaphore:
+                    if force_NumericalRangeClass_output:
+                        completion = await client.beta.chat.completions.parse(
+                            model=JUDGE_MODEL,
+                            messages=[
+                                {"role": "developer", "content": NUMERICAL_DEV_MSG},
+                                {"role": "user", "content": prompt},
+                            ],
+                            response_format=NumericalRange,
+                            reasoning_effort="low",
+                        )
+                        judge_response = (
+                            completion.choices[0].message.parsed.lower_bound,
+                            completion.choices[0].message.parsed.upper_bound,
+                        )
+                        parsed = completion.choices[0].message.parsed
+                        if hasattr(parsed, "relative_lower_bound") and hasattr(
+                            parsed, "relative_upper_bound"
+                        ):
+                            judge_response = (
+                                getattr(parsed, "lower_bound", None),
+                                getattr(parsed, "upper_bound", None),
+                                getattr(parsed, "relative_lower_bound", None),
+                                getattr(parsed, "relative_upper_bound", None),
+                            )
+                        break  # Exit retry loop on success
+                    else:
+                        completion = await client.chat.completions.create(
+                            model=JUDGE_MODEL,
+                            messages=[
+                                {"role": "developer", "content": system_message},
+                                {"role": "user", "content": prompt},
+                            ],
+                            max_completion_tokens=JUDGE_MAX_COMPLETION_TOKENS,
+                        )
+                        judge_response = completion.choices[0].message.content.strip()
+                        break  # Exit retry loop on success
+
+            except asyncio.TimeoutError:
+                if attempt == max_retries - 1:
+                    print(f"Timeout exceeded for prompt: {prompt_key}")
+                    judge_response = "TIMEOUT_ERROR"
+                else:
+                    print(
+                        f"Timeout occurred for prompt: {prompt_key}. Retrying in {retry_delay} seconds."
+                    )
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    print(f"Max retries exceeded for prompt: {prompt_key}", flush=True)
+                    judge_response = f"ERROR: Prompt: {prompt} and Exception: {str(e)}"
+                else:
+                    print(
+                        f"Error occurred for prompt: {prompt_key}. Retrying in {retry_delay} seconds."
+                    )
+                    print(e)
+                    await asyncio.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+
+        results[prompt_key] = judge_response
 
     tasks = [process_prompt(key, prompt) for key, prompt in judge_prompts.items()]
     try:
@@ -85,34 +164,50 @@ async def evaluate_responses_async(client, judge_prompts, system_message, concur
 
     return results
 
+
 def parse_proposition(proposition):
     """Parse proposition to determine if it's binary or numerical and extract options."""
     if pd.isna(proposition):
         return None, None
-    if '<value>' in proposition:
-        return 'numerical', proposition
-    elif '<pivotal>' in proposition:
-        match = re.search(r'<pivotal>([^<]+)</pivotal>', proposition)
+    if "<value>" in proposition:
+        return "numerical", proposition
+    elif "<pivotal>" in proposition:
+        match = re.search(r"<pivotal>([^<]+)</pivotal>", proposition)
         if match:
-            options = match.group(1).split('/')
+            options = match.group(1).split("/")
             if len(options) == 2:
-                prop1 = proposition.replace(f'<pivotal>{match.group(1)}</pivotal>', options[0])
-                prop2 = proposition.replace(f'<pivotal>{match.group(1)}</pivotal>', options[1])
-                return 'binary', (prop1, prop2)
+                prop1 = proposition.replace(
+                    f"<pivotal>{match.group(1)}</pivotal>", options[0]
+                )
+                prop2 = proposition.replace(
+                    f"<pivotal>{match.group(1)}</pivotal>", options[1]
+                )
+                return "binary", (prop1, prop2)
     print("Warning: Could not determine proposition type")
     return None, None
+
 
 def extract_boxed_evaluation(response):
     """Extract the capitalized letter or tuple of (lower_bound, upper_bound) or None"""
     if not response:
         return None
 
-    # If response is already a tuple, return it directly.
+    # If response is already a NumericalRange object or a tuple, return it directly.
+    if isinstance(response, NumericalRange):
+        if "relative_lower_bound" in response:
+            return (
+                response.lower_bound,
+                response.upper_bound,
+                response.relative_lower_bound,
+                response.relative_upper_bound,
+            )
+        else:
+            return (response.lower_bound, response.upper_bound)
     if isinstance(response, tuple):
         return response
 
     # Otherwise, assume it's a string and try to find "Answer: X"
-    match = re.search(r'Answer:\s*([^\n]+)', response, re.IGNORECASE)
+    match = re.search(r"Answer:\s*([^\n]+)", response, re.IGNORECASE)
     if not match:
         print(f"Warning: Could not find 'Answer:' in response: {response}", flush=True)
         return None
@@ -120,65 +215,77 @@ def extract_boxed_evaluation(response):
     answer = match.group(1).strip()
 
     # Handle A/B/C responses
-    if answer.upper() in ['A', 'B', 'C', 'D']:
+    if answer.upper() in ["A", "B", "C", "D"]:
         return answer.upper()
 
     return answer
 
-async def evaluate_response(client, system_prompt, user_prompt, model_response, proposition, filepath=None, concurrency_limit=None, use_belief_prompt=None):
+
+async def evaluate_response(
+    client,
+    system_prompt,
+    user_prompt,
+    model_response,
+    proposition,
+    filepath=None,
+    concurrency_limit=None,
+    use_belief_prompt=None,
+    request_id=None,
+):
     """Evaluate a single response."""
     if concurrency_limit is None:
         raise ValueError("concurrency_limit must be provided")
 
+    key = request_id or "response"
     prop_type, prop_data = parse_proposition(proposition)
 
-    if prop_type == 'binary':
+    if prop_type == "binary":
         prop1, prop2 = prop_data
 
         # Select appropriate prompt based on filename
-        if use_belief_prompt == 'direct':
+        if use_belief_prompt == "direct":
             prompt = BELIEF_BINARY_JUDGE_PROMPT_DIRECT.format(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 model_response=model_response,
                 proposition_option_1=prop1,
-                proposition_option_2=prop2
+                proposition_option_2=prop2,
             )
-        elif use_belief_prompt == 'consistency':
+        elif use_belief_prompt == "consistency":
             prompt = BELIEF_BINARY_JUDGE_PROMPT_CONSISTENCY.format(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 model_response=model_response,
                 proposition_option_1=prop1,
-                proposition_option_2=prop2
+                proposition_option_2=prop2,
             )
         elif filepath:
-            if 'disinformation' in filepath.lower():
+            if "disinformation" in filepath.lower():
                 prompt = BINARY_JUDGE_PROMPT_TEMPLATE.format(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     model_response=model_response,
                     proposition_option_1=prop1,
                     proposition_option_2=prop2,
-                    rules=DISINFORMATION_RULES
+                    rules=DISINFORMATION_RULES,
                 )
-            elif 'provided_facts' in filepath.lower():
+            elif "provided_facts" in filepath.lower():
                 prompt = BINARY_JUDGE_PROMPT_TEMPLATE.format(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     model_response=model_response,
                     proposition_option_1=prop1,
                     proposition_option_2=prop2,
-                    rules=""
+                    rules="",
                 )
-            elif 'continuations' in filepath.lower():
+            elif "continuations" in filepath.lower():
                 prompt = BINARY_JUDGE_PROMPT_TEMPLATE.format(
                     system_prompt=system_prompt,
                     user_prompt=user_prompt,
                     model_response=model_response,
                     proposition_option_1=prop1,
                     proposition_option_2=prop2,
-                    rules=CONTINUATIONS_RULES
+                    rules=CONTINUATIONS_RULES,
                 )
             else:
                 prompt = BINARY_JUDGE_PROMPT_TEMPLATE.format(
@@ -187,7 +294,7 @@ async def evaluate_response(client, system_prompt, user_prompt, model_response, 
                     model_response=model_response,
                     proposition_option_1=prop1,
                     proposition_option_2=prop2,
-                    rules=""
+                    rules="",
                 )
         else:
             prompt = BINARY_JUDGE_PROMPT_TEMPLATE.format(
@@ -196,43 +303,55 @@ async def evaluate_response(client, system_prompt, user_prompt, model_response, 
                 model_response=model_response,
                 proposition_option_1=prop1,
                 proposition_option_2=prop2,
-                rules=""
+                rules="",
             )
         results = await evaluate_responses_async(
             client,
-            {'response': prompt},
-            'You are a helpful assistant.',
-            concurrency_limit=concurrency_limit
+            {key: prompt},
+            "You are a helpful assistant.",
+            concurrency_limit=concurrency_limit,
         )
-    elif prop_type == 'numerical':
+    elif prop_type == "numerical":
         prompt = NUMERICAL_JUDGE_PROMPT.format(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model_response=model_response,
-            proposition=prop_data
+            proposition=prop_data,
         )
         results = await evaluate_responses_async(
             client,
-            {'response': prompt},
-            'You are a helpful assistant.',
+            {key: prompt},
+            "You are a helpful assistant.",
             concurrency_limit=concurrency_limit,
-            force_NumericalRangeClass_output=True
+            force_NumericalRangeClass_output=True,
         )
     else:
         print("Warning: Could not evaluate - invalid proposition type")
         return None
 
-    judge_response = results['response']
+    judge_response = results[key]
     return judge_response
 
-async def evaluate_doubling_down_response(client, system_prompt, user_prompt1, response1, user_prompt2, final_response, proposition, concurrency_limit=None):
+
+async def evaluate_doubling_down_response(
+    client,
+    system_prompt,
+    user_prompt1,
+    response1,
+    user_prompt2,
+    final_response,
+    proposition,
+    concurrency_limit=None,
+    request_id=None,
+):
     """Evaluate a doubling down response."""
     if concurrency_limit is None:
         raise ValueError("concurrency_limit must be provided")
 
+    key = request_id or "doubling_down"
     prop_type, prop_data = parse_proposition(proposition)
 
-    if prop_type == 'binary':
+    if prop_type == "binary":
         prop1, prop2 = prop_data
         prompt = DOUBLING_DOWN_BINARY_PROMPT.format(
             system_prompt=system_prompt,
@@ -241,38 +360,48 @@ async def evaluate_doubling_down_response(client, system_prompt, user_prompt1, r
             user_prompt2=user_prompt2,
             final_response=final_response,
             proposition_option_1=prop1,
-            proposition_option_2=prop2
+            proposition_option_2=prop2,
         )
     else:
         return None
 
     results = await evaluate_responses_async(
         client,
-        {'doubling_down': prompt},
-        'You are a helpful assistant.',
-        concurrency_limit=concurrency_limit
+        {key: prompt},
+        "You are a helpful assistant.",
+        concurrency_limit=concurrency_limit,
     )
-    return results['doubling_down']
+    return results[key]
 
-async def evaluate_numerical_responses(client, system_prompt, user_prompt, belief_responses, proposition, filepath=None, concurrency_limit=None):
+
+async def evaluate_numerical_responses(
+    client,
+    system_prompt,
+    user_prompt,
+    belief_responses,
+    proposition,
+    filepath=None,
+    concurrency_limit=None,
+    request_id=None,
+):
     """Evaluate multiple numerical responses together to determine a consistent range."""
     if concurrency_limit is None:
         raise ValueError("concurrency_limit must be provided")
 
+    key = request_id or "combined"
     # Create a combined prompt that includes all belief responses
     combined_responses = []
     for i, (prompt, response) in enumerate(belief_responses, 1):
-        combined_responses.extend([
-            f"Belief Prompt {i}:",
-            prompt,
-            f"Response {i}:",
-            response,
-            "---"
-        ])
+        combined_responses.extend(
+            [f"Belief Prompt {i}:", prompt, f"Response {i}:", response, "---"]
+        )
 
     combined_text = "\n".join(combined_responses)
 
-    combined_text = "[Note: Slight change in plans, evaluate this collection of responses as a whole.]\n" + combined_text
+    combined_text = (
+        "[Note: Slight change in plans, evaluate this collection of responses as a whole.]\n"
+        + combined_text
+    )
 
     prompt = NUMERICAL_JUDGE_PROMPT.format(
         system_prompt=system_prompt,
@@ -283,13 +412,14 @@ async def evaluate_numerical_responses(client, system_prompt, user_prompt, belie
 
     results = await evaluate_responses_async(
         client,
-        {'combined': prompt},
-        'You are a helpful assistant.',
+        {key: prompt},
+        "You are a helpful assistant.",
         concurrency_limit=concurrency_limit,
-        force_NumericalRangeClass_output=True
+        force_NumericalRangeClass_output=True,
     )
 
-    return results['combined']
+    return results[key]
+
 
 class RateLimiter:
     def __init__(self, max_requests_per_minute):
@@ -302,7 +432,9 @@ class RateLimiter:
             now = asyncio.get_event_loop().time()
             # Remove timestamps older than 1 minute
             cutoff = now - 60
-            self.request_timestamps = [ts for ts in self.request_timestamps if ts > cutoff]
+            self.request_timestamps = [
+                ts for ts in self.request_timestamps if ts > cutoff
+            ]
 
             if len(self.request_timestamps) >= self.max_rpm:
                 # Calculate sleep time needed
@@ -313,43 +445,58 @@ class RateLimiter:
 
             self.request_timestamps.append(now)
 
+
+def belief_columns_for(df):
+    """(belief_elicit_col, generation_col) pairs present in df. Shared by the live
+    evaluator and the batch fetch step so both map judge results identically."""
+    pairs = []
+    for i in range(1, 5):
+        belief_col = f"belief_elicit_{i}"
+        if belief_col not in df.columns:
+            continue
+        run_cols = [
+            c
+            for c in df.columns
+            if c.startswith(f"generation(belief_system_1 + belief_elicit_{i})_run")
+        ]
+        if run_cols:
+            pairs.extend((belief_col, rc) for rc in run_cols)
+        elif f"generation(belief_system_1 + belief_elicit_{i})" in df.columns:
+            pairs.append(
+                (belief_col, f"generation(belief_system_1 + belief_elicit_{i})")
+            )
+    return pairs
+
+
 async def process_file(filepath, output_file, concurrency_limit):
     """Process a single CSV file."""
     df = pd.read_csv(filepath)
 
     # make grount_truht_extractd a copy of formatted_ground_truth
-    df['ground_truth_extracted'] = df['formatted_ground_truth']
+    df["ground_truth_extracted"] = df["formatted_ground_truth"]
 
     # Initialize columns for each run of system+user evaluations
-    system_user_run_cols = [col for col in df.columns if col.startswith('generation(System Prompt + User Prompt)_run')]
+    system_user_run_cols = [
+        col
+        for col in df.columns
+        if col.startswith("generation(System Prompt + User Prompt)_run")
+    ]
     if system_user_run_cols:
         for run_col in system_user_run_cols:
-            eval_col = run_col.replace('generation', 'eval')
+            eval_col = run_col.replace("generation", "eval")
             df[eval_col] = None
-            df[f'{eval_col}_extracted'] = None
+            df[f"{eval_col}_extracted"] = None
     else:
         # Fallback for single run case
-        df['system_user_eval'] = None
-        df['system_user_extracted'] = None
+        df["system_user_eval"] = None
+        df["system_user_extracted"] = None
 
     # Handle belief elicitation columns
-    belief_columns = []
-    for i in range(1, 5):
-        belief_col = f'belief_elicit_{i}'
-        if belief_col in df.columns:
-            run_cols = [col for col in df.columns if col.startswith(f'generation(belief_system_1 + belief_elicit_{i})_run')]
-            if run_cols:
-                for run_col in run_cols:
-                    eval_col = run_col.replace('generation', 'eval')
-                    df[eval_col] = None
-                    df[f'{eval_col}_extracted'] = None
-                    belief_columns.append((belief_col, run_col))
-            else:
-                gen_col = f'generation(belief_system_1 + belief_elicit_{i})'
-                if gen_col in df.columns:
-                    df[f'belief_eval_{i}'] = None
-                    df[f'belief_eval_{i}_extracted'] = None
-                    belief_columns.append((belief_col, gen_col))
+    belief_columns = belief_columns_for(df)
+    for _belief_col, gen_col in belief_columns:
+        eval_col = gen_col.replace("generation", "eval")
+        df[eval_col] = None
+        df[f"{eval_col}_extracted"] = None
 
     # Create semaphore for concurrent processing
     semaphore = asyncio.Semaphore(concurrency_limit)  # Limit concurrent tasks
@@ -357,80 +504,115 @@ async def process_file(filepath, output_file, concurrency_limit):
     async def process_with_semaphore(row_data):
         idx, row = row_data
         async with semaphore:
-            return await process_row(idx, row, df, belief_columns, filepath, concurrency_limit)
+            return await process_row(
+                idx, row, df, belief_columns, filepath, concurrency_limit
+            )
 
     # Process all rows with concurrent tasks and progress bar
     tasks = [process_with_semaphore((idx, row)) for idx, row in df.iterrows()]
     await tqdm_asyncio.gather(*tasks, desc=f"Processing {os.path.basename(filepath)}")
 
-    # Save final results
-    output_path = output_file
-    print(f"\n====Saving final results to {output_path}====")
-    df.to_csv(output_path, index=False)
+    # Save final results (collect mode only captured request bodies, nothing to save)
+    if not BATCH_COLLECT:
+        output_path = output_file
+        print(f"\n====Saving final results to {output_path}====")
+        df.to_csv(output_path, index=False)
 
     return df
+
 
 async def process_row(idx, row, df, belief_columns, filepath, concurrency_limit):
     """Process a single row with concurrent API calls."""
 
     # Gather all tasks that need to be executed for this row
     tasks = []
+    base = os.path.basename(filepath)  # custom_id prefix for batch collect mode
 
     # Add system+user response tasks
-    is_doubling_down = 'dd_turn_1_prompt' in df.columns and 'dd_turn_1_response' in df.columns
-    system_user_run_cols = [col for col in df.columns if col.startswith('generation(System Prompt + User Prompt)_run')]
+    is_doubling_down = (
+        "dd_turn_1_prompt" in df.columns and "dd_turn_1_response" in df.columns
+    )
+    system_user_run_cols = [
+        col
+        for col in df.columns
+        if col.startswith("generation(System Prompt + User Prompt)_run")
+    ]
 
     if system_user_run_cols:
         # Handle multiple runs
         for run_col in system_user_run_cols:
             if is_doubling_down:
-                tasks.append((run_col, evaluate_doubling_down_response(
-                    client,
-                    row['system_prompt'],
-                    row['dd_turn_1_prompt'],
-                    row['dd_turn_1_response'],
-                    row['user_prompt'],
-                    row[run_col],  # Use the specific run's response
-                    row['proposition'],
-                    concurrency_limit
-                )))
+                tasks.append(
+                    (
+                        run_col,
+                        evaluate_doubling_down_response(
+                            client,
+                            row["system_prompt"],
+                            row["dd_turn_1_prompt"],
+                            row["dd_turn_1_response"],
+                            row["user_prompt"],
+                            row[run_col],  # Use the specific run's response
+                            row["proposition"],
+                            concurrency_limit,
+                            request_id=f"{base}::{idx}::{run_col}",
+                        ),
+                    )
+                )
             else:
-                tasks.append((run_col, evaluate_response(
-                    client,
-                    row['system_prompt'],
-                    row['user_prompt'],
-                    row[run_col],  # Use the specific run's response
-                    row['proposition'],
-                    filepath=filepath,
-                    concurrency_limit=concurrency_limit
-                )))
+                tasks.append(
+                    (
+                        run_col,
+                        evaluate_response(
+                            client,
+                            row["system_prompt"],
+                            row["user_prompt"],
+                            row[run_col],  # Use the specific run's response
+                            row["proposition"],
+                            filepath=filepath,
+                            concurrency_limit=concurrency_limit,
+                            request_id=f"{base}::{idx}::{run_col}",
+                        ),
+                    )
+                )
     else:
         # Fallback for single run case
         if is_doubling_down:
-            tasks.append(('system_user', evaluate_doubling_down_response(
-                client,
-                row['system_prompt'],
-                row['dd_turn_1_prompt'],
-                row['dd_turn_1_response'],
-                row['user_prompt'],
-                row['generation(System Prompt + User Prompt)'],
-                row['proposition'],
-                concurrency_limit
-            )))
+            tasks.append(
+                (
+                    "system_user",
+                    evaluate_doubling_down_response(
+                        client,
+                        row["system_prompt"],
+                        row["dd_turn_1_prompt"],
+                        row["dd_turn_1_response"],
+                        row["user_prompt"],
+                        row["generation(System Prompt + User Prompt)"],
+                        row["proposition"],
+                        concurrency_limit,
+                        request_id=f"{base}::{idx}::system_user",
+                    ),
+                )
+            )
         else:
-            tasks.append(('system_user', evaluate_response(
-                client,
-                row['system_prompt'],
-                row['user_prompt'],
-                row['generation(System Prompt + User Prompt)'],
-                row['proposition'],
-                filepath=filepath,
-                concurrency_limit=concurrency_limit
-            )))
+            tasks.append(
+                (
+                    "system_user",
+                    evaluate_response(
+                        client,
+                        row["system_prompt"],
+                        row["user_prompt"],
+                        row["generation(System Prompt + User Prompt)"],
+                        row["proposition"],
+                        filepath=filepath,
+                        concurrency_limit=concurrency_limit,
+                        request_id=f"{base}::{idx}::system_user",
+                    ),
+                )
+            )
 
     # Add belief evaluation tasks
-    prop_type, _ = parse_proposition(row['proposition'])
-    if prop_type == 'numerical':
+    prop_type, _ = parse_proposition(row["proposition"])
+    if prop_type == "numerical":
         # Gather belief responses for numerical propositions
         belief_responses = []
         for belief_col, gen_col in belief_columns:
@@ -438,39 +620,55 @@ async def process_row(idx, row, df, belief_columns, filepath, concurrency_limit)
                 belief_responses.append((row[belief_col], row[gen_col]))
 
         if belief_responses:
-            if 'belief_system_1' not in row:
-                row['belief_system_1'] = "You are a helpful assistant."
-            tasks.append(('belief', evaluate_numerical_responses(
-                client,
-                row['belief_system_1'],
-                row['belief_elicit_1'],
-                belief_responses,
-                proposition=row['proposition'],
-                filepath=filepath,
-                concurrency_limit=concurrency_limit
-            )))
+            if "belief_system_1" not in row:
+                row["belief_system_1"] = "You are a helpful assistant."
+            tasks.append(
+                (
+                    "belief",
+                    evaluate_numerical_responses(
+                        client,
+                        row["belief_system_1"],
+                        row["belief_elicit_1"],
+                        belief_responses,
+                        proposition=row["proposition"],
+                        filepath=filepath,
+                        concurrency_limit=concurrency_limit,
+                        request_id=f"{base}::{idx}::belief",
+                    ),
+                )
+            )
     else:
         # Add individual belief tasks for non-numerical propositions
         for belief_col, gen_col in belief_columns:
             if pd.notna(row[belief_col]) and pd.notna(row[gen_col]):
-                if 'belief_system_1' not in row:
-                    row['belief_system_1'] = "You are a helpful assistant."
-                tasks.append((gen_col, evaluate_response(
-                    client,
-                    row['belief_system_1'],
-                    row[belief_col],
-                    row[gen_col],
-                    row['proposition'],
-                    filepath=filepath,
-                    concurrency_limit=concurrency_limit,
-                    use_belief_prompt='direct' if 'elicit_1' in belief_col else 'consistency'
-                )))
+                if "belief_system_1" not in row:
+                    row["belief_system_1"] = "You are a helpful assistant."
+                tasks.append(
+                    (
+                        gen_col,
+                        evaluate_response(
+                            client,
+                            row["belief_system_1"],
+                            row[belief_col],
+                            row[gen_col],
+                            row["proposition"],
+                            filepath=filepath,
+                            concurrency_limit=concurrency_limit,
+                            use_belief_prompt="direct"
+                            if "elicit_1" in belief_col
+                            else "consistency",
+                            request_id=f"{base}::{idx}::{gen_col}",
+                        ),
+                    )
+                )
 
-    # Execute all tasks concurrently with timeout
+    # Execute all tasks with timeout. At concurrency 1 this is deliberately
+    # sequential so a row with many generation columns cannot burst past TPM.
     try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*(task[1] for task in tasks)),
-            timeout=60  # 1 minutes timeout per row
+        results = await run_row_tasks(
+            [task[1] for task in tasks],
+            concurrency_limit=concurrency_limit,
+            timeout_seconds=60,
         )
     except asyncio.TimeoutError:
         print(f"Timeout processing row {idx}")
@@ -478,64 +676,72 @@ async def process_row(idx, row, df, belief_columns, filepath, concurrency_limit)
 
     # Process results
     for (task_type, _), result in zip(tasks, results):
-        if task_type.startswith('generation(System Prompt + User Prompt)_run'):
+        if task_type.startswith("generation(System Prompt + User Prompt)_run"):
             # Handle multiple system+user runs
-            eval_col = task_type.replace('generation', 'eval')
+            eval_col = task_type.replace("generation", "eval")
             df.at[idx, eval_col] = result
-            df.at[idx, f'{eval_col}_extracted'] = extract_boxed_evaluation(result)
-        elif task_type == 'system_user':
+            df.at[idx, f"{eval_col}_extracted"] = extract_boxed_evaluation(result)
+        elif task_type == "system_user":
             # Fallback for single run case
-            df.at[idx, 'system_user_eval'] = result
-            df.at[idx, 'system_user_extracted'] = extract_boxed_evaluation(result)
-        elif task_type == 'belief':
+            df.at[idx, "system_user_eval"] = result
+            df.at[idx, "system_user_extracted"] = extract_boxed_evaluation(result)
+        elif task_type == "belief":
             # Store numerical belief results
             for belief_col, gen_col in belief_columns:
-                eval_col = gen_col.replace('generation', 'eval')
+                eval_col = gen_col.replace("generation", "eval")
                 df.at[idx, eval_col] = result
-                df.at[idx, f'{eval_col}_extracted'] = extract_boxed_evaluation(result)
+                df.at[idx, f"{eval_col}_extracted"] = extract_boxed_evaluation(result)
         else:
             # Store individual belief results
-            eval_col = task_type.replace('generation', 'eval')
+            eval_col = task_type.replace("generation", "eval")
             df.at[idx, eval_col] = result
-            df.at[idx, f'{eval_col}_extracted'] = extract_boxed_evaluation(result)
+            df.at[idx, f"{eval_col}_extracted"] = extract_boxed_evaluation(result)
+
+
+async def run_row_tasks(coros, concurrency_limit, timeout_seconds):
+    if concurrency_limit <= 1:
+        results = []
+        for index, coro in enumerate(coros):
+            results.append(await asyncio.wait_for(coro, timeout=timeout_seconds))
+            # ponytail: fixed low-rate delay; add a CLI flag if judge throughput matters.
+            if index < len(coros) - 1:
+                await asyncio.sleep(2)
+        return results
+    return await asyncio.wait_for(asyncio.gather(*coros), timeout=timeout_seconds)
+
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
-    parser.add_argument("--test", action='store_true', help="Run in test mode")
+    parser.add_argument("--test", action="store_true", help="Run in test mode")
     parser.add_argument("--input_file", help="Input CSV file to process")
-    parser.add_argument("--concurrency_limit", type=int, default=50, help="Global concurrency limit for API calls")
-    parser.add_argument("--judge-model", default="anthropic/claude-sonnet-4.6", dest="judge_model")
-    parser.add_argument("--numerical-judge-model", default="anthropic/claude-sonnet-4.6", dest="numerical_judge_model")
-    parser.add_argument("--cache-dir", default=".cache/openrouter", dest="cache_dir")
+    parser.add_argument(
+        "--concurrency_limit",
+        type=int,
+        default=50,
+        help="Global concurrency limit for API calls",
+    )
     args = parser.parse_args()
 
-    api_key = os.getenv("OPENROUTER_API_KEY")
-    if not api_key:
-        print("ERROR: OPENROUTER_API_KEY not set", file=sys.stderr)
-        sys.exit(1)
+    # Process files sequentially
+    if args.input_file:
+        output_file = args.input_file.replace("responses", "evaluated")
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        asyncio.run(process_file(args.input_file, output_file, args.concurrency_limit))
+    else:
+        files = glob.glob(
+            "test_csv_data/responses/*.csv" if args.test else "csv_data/responses/*.csv"
+        )
 
-    _judge_model = args.judge_model
-    _numerical_judge_model = args.numerical_judge_model
-    _cache_dir = Path(args.cache_dir)
+        for file in files:
+            output_file = file.replace("responses", "evaluated")
+            os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
-    async def _run():
-        global client
-        async with OpenRouterClient(api_key=api_key, concurrency=args.concurrency_limit) as orc:
-            client = orc
-            if args.input_file:
-                output_file = args.input_file.replace('responses', 'evaluated')
-                os.makedirs(os.path.dirname(output_file), exist_ok=True)
-                await process_file(args.input_file, output_file, args.concurrency_limit)
-            else:
-                files = glob.glob('test_csv_data/responses/*.csv' if args.test else 'csv_data/responses/*.csv')
-                for file in files:
-                    output_file = file.replace('responses', 'evaluated')
-                    os.makedirs(os.path.dirname(output_file), exist_ok=True)
-                    if os.path.exists(output_file):
-                        print(f"====Skipping file: {file}====")
-                        continue
-                    print(f"====Processing file: {file}====")
-                    await process_file(file, output_file, args.concurrency_limit)
+            # Skip files that are already evaluated
+            if os.path.exists(output_file):
+                print(f"====Skipping file: {file}====")
+                continue
 
-    asyncio.run(_run())
+            print(f"====Processing file: {file}====")
+            asyncio.run(process_file(file, output_file, args.concurrency_limit))

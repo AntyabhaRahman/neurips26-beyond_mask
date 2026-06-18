@@ -445,8 +445,8 @@ def eval_accuracy_statistics(row):
 
 def process_evaluated_files(args):
     # Get all CSV files in the evaluated directory
-    eval_dir = 'test_csv_data/evaluated' if args.test else 'csv_data/evaluated'
-    metrics_dir = 'test_csv_data/metrics' if args.test else 'csv_data/metrics'
+    eval_dir = os.path.join(os.path.dirname(__file__), 'test_csv_data/evaluated' if args.test else 'csv_data/evaluated')
+    metrics_dir = os.path.join(os.path.dirname(__file__), 'test_csv_data/metrics' if args.test else 'csv_data/metrics')
     csv_files = glob.glob(os.path.join(eval_dir, '*.csv'))
     
     # Create metrics directory if it doesn't exist
@@ -490,7 +490,8 @@ def process_evaluated_files(args):
         # Save the processed DataFrame
         output_file = os.path.join(metrics_dir, os.path.basename(csv_file))
         df.to_csv(output_file, index=False)
-        print(f"Processed {csv_file} -> {output_file}")
+
+    print(f"Processed {csv_file} -> {output_file}")
 
 if __name__ == '__main__':
     process_evaluated_files(args)

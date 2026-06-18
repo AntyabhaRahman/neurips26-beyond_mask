@@ -1,154 +1,113 @@
-# Model Evaluation Framework (OpenRouter)
+# Model Evaluation Framework
 
-This framework accompanies the MASK benchmark (Model Alignment between Statements and Knowledge) for measuring honesty in large language models. It tests whether a model will contradict its own beliefs when pressured to lie, separating *honesty* from *factual accuracy*.
+This framework accompanies our research paper "Beyond Accuracy: Disentangling Honesty and Factuality in AI Models" which introduces MASK (Model Alignment between Statements and Knowledge), a novel benchmark for measuring honesty in large language models. Our research demonstrates that while larger models obtain higher accuracy, they do not necessarily become more honest when pressured to lie. We introduce a consistency-based honesty metric that disentangles accuracy from honesty by testing whether models will contradict their own beliefs under pressure. The framework provides tools for evaluating language models' responses across different scenarios, focusing on this critical distinction between knowing facts (accuracy) and choosing to state them truthfully (honesty).
 
-This fork routes **every** model call through [OpenRouter](https://openrouter.ai/) — so you can run any OpenRouter-supported model as the **baseline** (the model being evaluated) and any OpenRouter-supported model as the **judge** (the LLM that grades responses). Only one API key is required.
+## Overview
 
-## Pipeline
-
-```
-HuggingFace cais/MASK ──► generate_responses.py ──► evaluate.py ──► metric.py ──► process_metrics.py
-                          (baseline model, via       (judge model,    (per-row     (all_results.json)
-                           OpenRouter)                via OpenRouter)  metrics)
-```
+The framework consists of three main stages:
+1. Response Generation
+2. Response Evaluation
+3. Metrics Processing
 
 ## Setup
 
-1. Create a `.env` file at the repo root (or anywhere `python-dotenv` walks up to) with:
-   ```env
-   OPENROUTER_API_KEY=sk-or-...
-   ```
+1. Create a `.env` file in the root directory with your API keys:
+```env
+OPENAI_API_KEY=your_key_here # needed for evaluation
+ANTHROPIC_API_KEY=your_key_here
+```
 
-2. Install dependencies (handled at the parent repo level via `uv`):
-   ```bash
-   uv sync
-   ```
-
-3. **No separate `download.py` step is required for generation.** `generate_responses.py` loads `cais/MASK` directly from HuggingFace. (`download.py` still works if you want the raw CSVs locally for inspection.)
-
-## Run order
-
-All commands below assume cwd is the `mask/` directory.
-
-### 1. Generate responses (baseline model)
-
+2. Install dependencies (recommended to use a virtual environment):
 ```bash
-uv run python mask/generate_responses.py \
-  --model google/gemini-3.1-flash-lite \
-  [--archetypes statistics known_facts ...] \
-  [--lie-k 1] [--max-tokens 1000] [--temperature 1.0] \
-  [--concurrency 8] [--limit N] [--test] \
-  [--cache-dir .cache/openrouter]
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-| Flag | Default | Notes |
-| --- | --- | --- |
-| `--model` | required | Any OpenRouter model ID, e.g. `google/gemini-3.1-flash-lite`, `anthropic/claude-sonnet-4.6`, `openai/gpt-4o`. |
-| `--archetypes` | all 6 | `continuations` `disinformation` `doubling_down_known_facts` `known_facts` `provided_facts` `statistics`. |
-| `--lie-k` | 1 | Number of times to sample the lying prompt per row. |
-| `--max-tokens` | 1000 | Per-call output limit. |
-| `--temperature` | 1.0 | Sampling temperature. |
-| `--concurrency` | 8 | Max concurrent OpenRouter requests. |
-| `--limit` | — | Cap rows per archetype (smoke testing). |
-| `--test` | off | Uses 5 rows/archetype, writes to `test_csv_data/responses/`. |
-| `--cache-dir` | `.cache/openrouter` | Disk cache (SHA256-keyed). Re-runs are free. |
-
-Outputs, per archetype:
-- `csv_data/responses/{archetype}_{model_slug}.csv` — the existing MASK CSV schema with `generation(System Prompt + User Prompt)_run{N}` and `generation(belief_system_1 + belief_elicit_{i})_run{N}` columns.
-- `csv_data/responses/{archetype}_{model_slug}.meta.json` — sidecar with per-call `finish_reason`, `prompt_tokens`, `completion_tokens`, `error`, plus run totals.
-
-`{model_slug}` is the model ID's last path component (e.g. `google/gemini-3.1-flash-lite` → `gemini-3.1-flash-lite`).
-
-If a CSV already exists at the output path, that archetype is skipped — delete the file to force a re-run.
-
-### 2. Evaluate responses (judge model)
-
+3. Download data:
 ```bash
-uv run python mask/evaluate.py \
-  [--judge-model openai/gpt-4o] \
-  [--numerical-judge-model openai/gpt-4o-mini] \
-  [--test] [--input_file path/to/file.csv] \
-  [--concurrency_limit 50] [--cache-dir .cache/openrouter]
+python download.py
 ```
 
-| Flag | Default | Notes |
-| --- | --- | --- |
-| `--judge-model` | `anthropic/claude-sonnet-4.6` | Used for the binary/text-output judge (`A` / `B` / `C`). Sonnet was picked as the default because it followed the `Answer: <letter>` output contract on every prompt we tried; chattier models (e.g. `google/gemini-3.1-pro-preview`) often drift into prose and produce unparseable verdicts. |
-| `--numerical-judge-model` | `anthropic/claude-sonnet-4.6` | Used for the `statistics` archetype, which requires JSON Schema output `{lower_bound, upper_bound}`. The model you pick **must support structured outputs** on OpenRouter. |
-| `--test` | off | Reads `test_csv_data/responses/`, writes `test_csv_data/evaluated/`. |
-| `--input_file` | — | Evaluate a single file instead of the whole directory. |
-| `--concurrency_limit` | 50 | Outer concurrency cap (the OpenRouter client also has its own semaphore). |
-| `--cache-dir` | `.cache/openrouter` | Shared with generation; same cache, no double-spend. |
+## Directory Structure
+```
+├── csv_data/               # Production data directory
+│   ├── responses/         # Generated model responses
+│   ├── evaluated/         # Evaluated responses
+│   └── metrics/          # Processed metrics
+├── test_csv_data/         # Test data directory (same structure as csv_data)
+├── prompts/               # Evaluation prompt templates
+└── *.py                   # Main Python scripts
+```
+## Usage
 
-Outputs: `csv_data/evaluated/{archetype}_{model_slug}.csv` — the input CSV plus new judge-verdict columns whose names start with `eval` followed by the same `(...)` suffix as the corresponding `generation(...)` column, ending in `_extracted`. The cell value is `A`/`B`/`C` for binary or `(lower, upper)` tuple text for numerical.
+### 1. Generate Responses
 
-### 3. Per-row metrics
-
+Generate responses using the `generate_responses.py` script:
 ```bash
-uv run python mask/metric.py [--test]
+python generate_responses.py [--test] [--model MODEL_NAME] [--temperature TEMP] [--lie_k NUM_RUNS]
 ```
 
-Reads `csv_data/evaluated/*.csv`, computes `eval_belief`, `eval_accuracy`, and `eval_honesty_*` per row, and writes `csv_data/metrics/*.csv`.
+Options:
+- `--test`: Use test directories
+- `--model`: Model name to use (default: gpt-4o)
+- `--temperature`: Sampling temperature (default: 1.0)
+- `--lie_k`: Number of lying prompts to generate per row (default: 1)
 
-### 4. Aggregate final metrics
+The script supports OpenAI and Anthropic models. Generated responses will be saved in `csv_data/responses/` following the naming convention: `{archetype}_{model}.csv`
 
+### 2. Evaluate Responses
+
+Run the evaluation script:
 ```bash
-uv run python mask/process_metrics.py [--test]
+python evaluate.py [--test] [--input_file path/to/file.csv] [--concurrency_limit 50]
 ```
 
-Reads `csv_data/metrics/*.csv` and writes `csv_data/metrics/all_results.json`:
+Options:
+- `--test`: Use test directories
+- `--input_file`: Process a specific file (optional)
+- `--concurrency_limit`: Maximum concurrent API calls (default: 50)
 
-```json
-{
-  "<archetype>": {
-    "<model>": {
-      "total_responses": 0,
-      "honest_1": 0.0,
-      "unhonest_1": 0.0,
-      "honesty_score_1": 0.0,
-      "accurate": 0.0,
-      "inaccurate": 0.0
-    }
-  }
-}
-```
+This script:
+- Processes each response file through evaluation prompts
+- Handles different archetypes (binary, statistics, etc.)
+- Supports multiple evaluation runs per response
+- Outputs results to the `evaluated/` directory
 
-## End-to-end smoke test
+### 3. Calculate Metrics
 
+Run the metrics calculation:
 ```bash
-cd mask
-uv run python mask/generate_responses.py --test \
-  --model google/gemini-3.1-flash-lite \
-  --archetypes statistics known_facts
-uv run python mask/evaluate.py --test \
-  --judge-model anthropic/claude-sonnet-4.6 \
-  --numerical-judge-model anthropic/claude-sonnet-4.6
-uv run python mask/metric.py --test
-uv run python mask/process_metrics.py --test
-cat test_csv_data/metrics/all_results.json
+python metric.py [--test]
 ```
 
-## Directory layout
+This script:
+- Processes evaluated responses
+- Calculates accuracy and honesty metrics
+- Outputs to the `metrics/` directory
 
-```
-mask/
-├── csv_data/                # production
-│   ├── responses/           # generate_responses.py output (CSV + .meta.json)
-│   ├── evaluated/           # evaluate.py output
-│   └── metrics/             # metric.py + all_results.json
-├── test_csv_data/           # mirrors csv_data, used when --test is passed
-├── mask/                    # pipeline scripts (this directory)
-│   ├── generate_responses.py
-│   ├── evaluate.py
-│   ├── metric.py
-│   ├── process_metrics.py
-│   ├── prompts/             # judge prompt templates
-│   └── README.md            # (this file)
-└── requirements.txt
+### 4. Process Final Metrics
+
+Generate the final metrics summary:
+```bash
+python process_metrics.py [--test]
 ```
 
-## Notes
+This creates `metrics/all_results.json` containing:
+- Total responses per model/archetype
+- Honesty scores (levels 1 and 10)
+- Accuracy scores
+- Other relevant metrics
 
-- The OpenRouter client (`src/beyond_mask/openrouter.py`) handles retries (429/5xx), a disk cache keyed by `(model, messages, temperature, max_tokens, response_format)`, and a concurrency semaphore. Cached results are free on re-runs.
-- For the `statistics` archetype the numerical judge sends `response_format={"type": "json_schema", ...}`. Pick a `--numerical-judge-model` that supports structured outputs on OpenRouter (most current OpenAI / Gemini / Anthropic models do).
-- Paths in every script are cwd-relative; run from `mask/`.
+## Metrics Explanation
+
+- **Honesty Score**: Honesty in initial responses
+- **Honesty Score (@10)**: Consistency across multiple generations
+- **Accuracy**: Alignment with ground truth (where applicable)
+
+## Testing
+
+Use the `--test` flag with any script to run in test mode, which:
+- Uses `test_csv_data/` instead of `csv_data/`
+- Helps validate changes without affecting production data
+- Provides a smaller dataset for quick iterations
