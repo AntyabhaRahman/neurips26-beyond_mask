@@ -46,6 +46,10 @@ def _(mo):
 
     Browse one row from `cais/MASK`, edit system and user prompt templates, run a
     configurable OpenRouter model, and append the prompt/response metadata to
+    `results/openrouter_playground/`.# OpenRouter playground
+
+    Browse one row from `cais/MASK`, edit system and user prompt templates, run a
+    configurable OpenRouter model, and append the prompt/response metadata to
     `results/openrouter_playground/`.
     """)
     return
@@ -73,6 +77,10 @@ def _(ENV_FILE, os):
 def _(mo):
     mo.md("""
     ## 1. Choose a dataset row
+
+    Select a MASK archetype, then move the row slider to inspect one example at a
+    time. The row preview shows every field as a vertical `field` / `value`
+    table, since each MASK split can expose a different schema.## 1. Choose a dataset row
 
     Select a MASK archetype, then move the row slider to inspect one example at a
     time. The row preview shows every field as a vertical `field` / `value`
@@ -207,7 +215,7 @@ def chat_message_to_dict(message):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## MASK Dataset with different splits
+    ## MASK Dataset with different splits## MASK Dataset with different splits
     """)
     return
 
@@ -294,6 +302,10 @@ def _(mo):
 
     Use Python-style field names from the selected dataset row, such as
     `{system_prompt}`, `{user_prompt}`, `{proposition}`, or `{ground_truth}`.
+    The next cell renders the final messages exactly as they will be sent.## 2. Write prompt templates
+
+    Use Python-style field names from the selected dataset row, such as
+    `{system_prompt}`, `{user_prompt}`, `{proposition}`, or `{ground_truth}`.
     The next cell renders the final messages exactly as they will be sent.
     """)
     return
@@ -309,6 +321,11 @@ def _(mo):
     )
     mo.vstack([system_template])
     return (system_template,)
+
+
+@app.cell
+def _():
+    return
 
 
 @app.cell
@@ -341,6 +358,9 @@ def _(mo, selected_row, system_template):
 def _(mo):
     mo.md("""
     ## 3. Configure the model call
+
+    Enter any OpenRouter model id, choose sampling settings, and optionally set a
+    seed. Leave the seed blank when you do not need deterministic sampling.## 3. Configure the model call
 
     Enter any OpenRouter model id, choose sampling settings, and optionally set a
     seed. Leave the seed blank when you do not need deterministic sampling.
@@ -406,7 +426,7 @@ def _(mo):
         start=1,
         stop=32768,
         step=1,
-        value=8192,
+        value=1024,
         label="Max tokens",
     )
     seed = mo.ui.text(
@@ -443,7 +463,7 @@ def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
     def build_reasoning(level):
         # One effort value for every provider; OpenRouter maps it to the right
         # native control (thinkingLevel / token budget). "none" disables reasoning.
-        return {"effort": level}
+        return {"effort": level, "summary":"auto"}
 
     reasoning_param = build_reasoning(reasoning_level.value)
 
@@ -479,6 +499,11 @@ def _(get_turn_results):
 def _(mo):
     mo.md("""
     ## 4. Continue as a chat
+
+    Use this chat when you want multi-turn behavior. It prepends the rendered
+    system prompt, then sends the full user/assistant chat history to OpenRouter
+    on every turn. When you are done, use the save button below to persist the
+    whole conversation as one JSON file.## 4. Continue as a chat
 
     Use this chat when you want multi-turn behavior. It prepends the rendered
     system prompt, then sends the full user/assistant chat history to OpenRouter
@@ -653,6 +678,9 @@ def _(json, mo, turn_results):
 def _(mo):
     mo.md("""
     ## 5. End and save
+
+    Click this once you are finished with the chat. It writes the full
+    system/user/assistant conversation to a single JSON file.## 5. End and save
 
     Click this once you are finished with the chat. It writes the full
     system/user/assistant conversation to a single JSON file.
