@@ -18,3 +18,5 @@ results/
 
 #environments
 .env
+
+uv.lock
