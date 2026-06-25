@@ -1,10 +1,10 @@
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.10"
 app = marimo.App(width="full")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import json
     import os
@@ -46,16 +46,12 @@ def _(mo):
 
     Browse one row from `cais/MASK`, edit system and user prompt templates, run a
     configurable OpenRouter model, and append the prompt/response metadata to
-    `results/openrouter_playground/`.# OpenRouter playground
-
-    Browse one row from `cais/MASK`, edit system and user prompt templates, run a
-    configurable OpenRouter model, and append the prompt/response metadata to
     `results/openrouter_playground/`.
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(ENV_FILE, os):
     def read_env_key():
         env_key = os.environ.get("OPENROUTER_API_KEY")
@@ -80,16 +76,12 @@ def _(mo):
 
     Select a MASK archetype, then move the row slider to inspect one example at a
     time. The row preview shows every field as a vertical `field` / `value`
-    table, since each MASK split can expose a different schema.## 1. Choose a dataset row
-
-    Select a MASK archetype, then move the row slider to inspect one example at a
-    time. The row preview shows every field as a vertical `field` / `value`
     table, since each MASK split can expose a different schema.
     """)
     return
 
 
-@app.function
+@app.function(hide_code=True)
 def jsonable(value):
     if value is None or isinstance(value, str | int | float | bool):
         return value
@@ -100,7 +92,7 @@ def jsonable(value):
     return str(value)
 
 
-@app.function
+@app.function(hide_code=True)
 def stringify_value(value):
     import json
 
@@ -111,19 +103,19 @@ def stringify_value(value):
     return str(value)
 
 
-@app.function
+@app.function(hide_code=True)
 def display_safe_value(value):
     import html
 
     return html.escape(stringify_value(value), quote=False)
 
 
-@app.function
+@app.function(hide_code=True)
 def display_safe_row(row):
     return {key: display_safe_value(value) for key, value in row.items()}
 
 
-@app.function
+@app.function(hide_code=True)
 def extract_angle_symbols(value):
     import re
 
@@ -140,7 +132,7 @@ def extract_angle_symbols(value):
     return symbols
 
 
-@app.function
+@app.function(hide_code=True)
 def extract_row_symbols(row):
     return {
         key: symbols
@@ -149,7 +141,7 @@ def extract_row_symbols(row):
     }
 
 
-@app.function
+@app.function(hide_code=True)
 def template_fields(template):
     import string
 
@@ -160,7 +152,7 @@ def template_fields(template):
     return fields
 
 
-@app.function
+@app.function(hide_code=True)
 def trace_returned(turn_result):
     return bool(
         turn_result.get("reasoning")
@@ -169,7 +161,7 @@ def trace_returned(turn_result):
     )
 
 
-@app.function
+@app.function(hide_code=True)
 def chat_result_record(result):
     return {
         "text": result.text,
@@ -182,7 +174,8 @@ def chat_result_record(result):
         "latency_ms": result.latency_ms,
         "cached": result.cached,
         "error": result.error,
-        "message": jsonable(result.message),
+        "request_hash": result.request_hash,
+        "message": abable(result.message),
         "reasoning": result.reasoning,
         "reasoning_details": jsonable(result.reasoning_details),
         "trace_returned": trace_returned(
@@ -196,13 +189,13 @@ def chat_result_record(result):
     }
 
 
-@app.function
+@app.function(hide_code=True)
 def code_block(text):
     delimiter = "````" if "```" in text else "```"
     return f"{delimiter}text\n{text}\n{delimiter}"
 
 
-@app.function
+@app.function(hide_code=True)
 def chat_message_to_dict(message):
     role = getattr(message, "role", "user") or "user"
     content = getattr(message, "content", None)
@@ -215,12 +208,12 @@ def chat_message_to_dict(message):
 @app.cell(hide_code=True)
 def _(mo):
     mo.md(r"""
-    ## MASK Dataset with different splits## MASK Dataset with different splits
+    ## MASK Dataset with different splits
     """)
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     DATASET_ID = "cais/MASK"
     SPLIT = "test"
@@ -243,7 +236,7 @@ def _(mo):
     return DATASET_ID, SPLIT, config
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(DATASET_ID, SPLIT, config, load_dataset, make_dataset_slug, mo):
     config_name = config.value
     ds = load_dataset(DATASET_ID, config_name, split=SPLIT)
@@ -259,7 +252,7 @@ def _(DATASET_ID, SPLIT, config, load_dataset, make_dataset_slug, mo):
     return config_name, ds, ds_slug
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(ds, mo):
     row_index = mo.ui.slider(
         start=0,
@@ -272,7 +265,7 @@ def _(ds, mo):
     return (row_index,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(ds, json, pl, row_index):
     selected_row_idx = int(row_index.value)
 
@@ -302,69 +295,29 @@ def _(mo):
 
     Use Python-style field names from the selected dataset row, such as
     `{system_prompt}`, `{user_prompt}`, `{proposition}`, or `{ground_truth}`.
-    The next cell renders the final messages exactly as they will be sent.## 2. Write prompt templates
-
-    Use Python-style field names from the selected dataset row, such as
-    `{system_prompt}`, `{user_prompt}`, `{proposition}`, or `{ground_truth}`.
     The next cell renders the final messages exactly as they will be sent.
     """)
     return
 
 
 @app.cell
-def _(pl):
-    dataset = pl.read_csv("./mask/mask/csv_data/evaluated/known_facts_claude-opus-4-8.csv")
-    # provided_ds = dataset.loc[dataset.dataset_split == "provided_facts"]
-    # provided_ds
-    dataset
+def _():
+    # dataset = pl.read_csv("mask/mask/csv_data/evaluated/doubling_down_known_facts_claude-opus-4-8.csv")
+    # dataset.filter(pl.col("eval(System Prompt + User Prompt)_run1_extracted") == "C")
     return
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    system_template = mo.ui.text_area(
-        value="{system_prompt}",
-        rows=6,
-        label="System prompt template",
-        full_width=True,
-    )
-    mo.vstack([system_template])
-    return (system_template,)
-
-
-@app.cell(hide_code=True)
-def _(mo, selected_row, system_template):
-    available_fields = set(selected_row)
-    requested_fields = template_fields(system_template.value)
-    missing_fields = sorted(requested_fields - available_fields)
-    mo.stop(
-        bool(missing_fields),
-        mo.md(
-            "**Missing template fields:** "
-            + ", ".join(f"`{field}`" for field in missing_fields)
-            + "\n\nUse one of: "
-            + ", ".join(f"`{field}`" for field in sorted(available_fields))
-        ),
-    )
-
-    row_context = {
-        key: "" if value is None else value for key, value in selected_row.items()
-    }
-    rendered_system_prompt = system_template.value.format_map(row_context)
-
-    mo.md(
-        f"## Rendered prompt\n\n**system**\n\n{code_block(rendered_system_prompt)}\n\n"
-    )
-    return (rendered_system_prompt,)
+@app.cell
+def _():
+    # modified_mask = pl.read_csv("edited_mask_data/provided_facts_omission_edited(edited_prompts).csv")
+    # modified_mask
+    return
 
 
 @app.cell(hide_code=True)
 def _(mo):
     mo.md("""
     ## 3. Configure the model call
-
-    Enter any OpenRouter model id, choose sampling settings, and optionally set a
-    seed. Leave the seed blank when you do not need deterministic sampling.## 3. Configure the model call
 
     Enter any OpenRouter model id, choose sampling settings, and optionally set a
     seed. Leave the seed blank when you do not need deterministic sampling.
@@ -430,7 +383,7 @@ def _(mo):
         start=1,
         stop=32768,
         step=1,
-        value=16000,
+        value=16384,
         label="Max tokens",
     )
     seed = mo.ui.text(
@@ -464,12 +417,20 @@ def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
     except ValueError:
         mo.stop(True, mo.md("**Seed must be an integer or blank.**"))
 
-    def build_reasoning(level):
+    def build_reasoning(level, model, max_output_tokens):
         # One effort value for every provider; OpenRouter maps it to the right
         # native control (thinkingLevel / token budget). "none" disables reasoning.
-        return {"effort": level, "summary":"auto"}
+        if level == "none":
+            return None
+        if model.startswith("anthropic/"):
+            return {"max_tokens": min(1024, max(1, max_output_tokens - 1)), "exclude": False}
+        return {"effort": level, "exclude": False}
 
-    reasoning_param = build_reasoning(reasoning_level.value)
+    reasoning_param = build_reasoning(
+        reasoning_level.value,
+        model_id_value,
+        int(max_tokens.value),
+    )
 
     model_params = {
         "model": model_id_value,
@@ -501,13 +462,46 @@ def _(get_turn_results):
 
 @app.cell(hide_code=True)
 def _(mo):
+    system_template = mo.ui.text_area(
+        value="{system_prompt}",
+        rows=6,
+        label="System prompt template",
+        full_width=True,
+    )
+    mo.vstack([system_template])
+    return (system_template,)
+
+
+@app.cell(hide_code=True)
+def _(mo, selected_row, system_template):
+    available_fields = set(selected_row)
+    requested_fields = template_fields(system_template.value)
+    missing_fields = sorted(requested_fields - available_fields)
+    mo.stop(
+        bool(missing_fields),
+        mo.md(
+            "**Missing template fields:** "
+            + ", ".join(f"`{field}`" for field in missing_fields)
+            + "\n\nUse one of: "
+            + ", ".join(f"`{field}`" for field in sorted(available_fields))
+        ),
+    )
+
+    row_context = {
+        key: "" if value is None else value for key, value in selected_row.items()
+    }
+    rendered_system_prompt = system_template.value.format_map(row_context)
+
+    mo.md(
+        f"## Rendered prompt\n\n**system**\n\n{code_block(rendered_system_prompt)}\n\n"
+    )
+    return (rendered_system_prompt,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
     mo.md("""
     ## 4. Continue as a chat
-
-    Use this chat when you want multi-turn behavior. It prepends the rendered
-    system prompt, then sends the full user/assistant chat history to OpenRouter
-    on every turn. When you are done, use the save button below to persist the
-    whole conversation as one JSON file.## 4. Continue as a chat
 
     Use this chat when you want multi-turn behavior. It prepends the rendered
     system prompt, then sends the full user/assistant chat history to OpenRouter
@@ -559,9 +553,10 @@ def _(
                 reasoning=model_params["reasoning"],
             )
 
-        set_turn_results(
-            {**get_turn_results(), str(turn_idx): chat_result_record(result)}
-        )
+        record = chat_result_record(result)
+        record["model"] = model_id_value
+        record["requested_reasoning"] = model_params["reasoning"]
+        set_turn_results({**get_turn_results(), str(turn_idx): record})
         return result.text if result.text else f"[ERROR: {result.error}]"
 
     chat = mo.ui.chat(
@@ -717,37 +712,22 @@ def _(json, mo, turn_results):
                 )
 
             else:
-
                 message_keys = ", ".join(sorted((result.get("message") or {}).keys()))
-
                 requested_reasoning = json.dumps(
-
                     result.get("requested_reasoning"),
-
                     indent=2,
-
                     ensure_ascii=False,
-
                     default=str,
-
                 )
-
                 sections.append(
 
                     f"### Assistant turn {turn_idx}\n\n"
-
                     "_No reasoning trace was returned by the selected model/provider for this turn._\n\n"
-
                     f"**model:** `{result.get('model')}`\n\n"
-
                     f"**requested reasoning**\n\n{code_block(requested_reasoning)}\n\n"
-
                     f"**assistant message keys:** `{message_keys or 'none'}`\n\n"
-
                     f"**finish_reason:** `{result.get('finish_reason')}`"
-
                 )
-
         trace_output = mo.md("## Reasoning trace\n\n" + "\n\n".join(sections))
 
     else:
@@ -766,9 +746,6 @@ def _(json, mo, turn_results):
 def _(mo):
     mo.md("""
     ## 5. End and save
-
-    Click this once you are finished with the chat. It writes the full
-    system/user/assistant conversation to a single JSON file.## 5. End and save
 
     Click this once you are finished with the chat. It writes the full
     system/user/assistant conversation to a single JSON file.
@@ -869,7 +846,10 @@ def _(
         save_dir
         / f"{ds_slug}__row-{selected_row_idx}__{saved_at.strftime('%Y%m%d-%H%M%S')}.json"
     )
-    save_path.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str))
+    save_path.write_text(
+        json.dumps(record, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
 
     mo.md(
         f"""

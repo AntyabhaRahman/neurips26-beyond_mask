@@ -13,8 +13,10 @@ notebooks/__marimo__/session/openrouter_playground.py.json
 CLAUDE.md
 
 # Run outputs
+results/
 .cache/
-uv.lock
 
 #environments
 .env
+
+uv.lock
