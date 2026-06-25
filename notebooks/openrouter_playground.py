@@ -1,10 +1,10 @@
 import marimo
 
-__generated_with = "0.23.9"
+__generated_with = "0.23.10"
 app = marimo.App(width="full")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import json
     import os
@@ -51,7 +51,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(ENV_FILE, os):
     def read_env_key():
         env_key = os.environ.get("OPENROUTER_API_KEY")
@@ -81,7 +81,7 @@ def _(mo):
     return
 
 
-@app.function
+@app.function(hide_code=True)
 def jsonable(value):
     if value is None or isinstance(value, str | int | float | bool):
         return value
@@ -92,7 +92,7 @@ def jsonable(value):
     return str(value)
 
 
-@app.function
+@app.function(hide_code=True)
 def stringify_value(value):
     import json
 
@@ -103,19 +103,19 @@ def stringify_value(value):
     return str(value)
 
 
-@app.function
+@app.function(hide_code=True)
 def display_safe_value(value):
     import html
 
     return html.escape(stringify_value(value), quote=False)
 
 
-@app.function
+@app.function(hide_code=True)
 def display_safe_row(row):
     return {key: display_safe_value(value) for key, value in row.items()}
 
 
-@app.function
+@app.function(hide_code=True)
 def extract_angle_symbols(value):
     import re
 
@@ -132,7 +132,7 @@ def extract_angle_symbols(value):
     return symbols
 
 
-@app.function
+@app.function(hide_code=True)
 def extract_row_symbols(row):
     return {
         key: symbols
@@ -141,7 +141,7 @@ def extract_row_symbols(row):
     }
 
 
-@app.function
+@app.function(hide_code=True)
 def template_fields(template):
     import string
 
@@ -152,7 +152,7 @@ def template_fields(template):
     return fields
 
 
-@app.function
+@app.function(hide_code=True)
 def trace_returned(turn_result):
     return bool(
         turn_result.get("reasoning")
@@ -161,7 +161,7 @@ def trace_returned(turn_result):
     )
 
 
-@app.function
+@app.function(hide_code=True)
 def chat_result_record(result):
     return {
         "text": result.text,
@@ -174,6 +174,7 @@ def chat_result_record(result):
         "latency_ms": result.latency_ms,
         "cached": result.cached,
         "error": result.error,
+        "request_hash": result.request_hash,
         "message": jsonable(result.message),
         "reasoning": result.reasoning,
         "reasoning_details": jsonable(result.reasoning_details),
@@ -188,13 +189,13 @@ def chat_result_record(result):
     }
 
 
-@app.function
+@app.function(hide_code=True)
 def code_block(text):
     delimiter = "````" if "```" in text else "```"
     return f"{delimiter}text\n{text}\n{delimiter}"
 
 
-@app.function
+@app.function(hide_code=True)
 def chat_message_to_dict(message):
     role = getattr(message, "role", "user") or "user"
     content = getattr(message, "content", None)
@@ -212,7 +213,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     DATASET_ID = "cais/MASK"
     SPLIT = "test"
@@ -235,7 +236,7 @@ def _(mo):
     return DATASET_ID, SPLIT, config
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(DATASET_ID, SPLIT, config, load_dataset, make_dataset_slug, mo):
     config_name = config.value
     ds = load_dataset(DATASET_ID, config_name, split=SPLIT)
@@ -251,7 +252,7 @@ def _(DATASET_ID, SPLIT, config, load_dataset, make_dataset_slug, mo):
     return config_name, ds, ds_slug
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(ds, mo):
     row_index = mo.ui.slider(
         start=0,
@@ -264,7 +265,7 @@ def _(ds, mo):
     return (row_index,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(ds, json, pl, row_index):
     selected_row_idx = int(row_index.value)
 
@@ -300,41 +301,17 @@ def _(mo):
 
 
 @app.cell
-def _(mo):
-    system_template = mo.ui.text_area(
-        value="{system_prompt}",
-        rows=6,
-        label="System prompt template",
-        full_width=True,
-    )
-    mo.vstack([system_template])
-    return (system_template,)
+def _():
+    # dataset = pl.read_csv("mask/mask/csv_data/evaluated/doubling_down_known_facts_claude-opus-4-8.csv")
+    # dataset.filter(pl.col("eval(System Prompt + User Prompt)_run1_extracted") == "C")
+    return
 
 
 @app.cell
-def _(mo, selected_row, system_template):
-    available_fields = set(selected_row)
-    requested_fields = template_fields(system_template.value)
-    missing_fields = sorted(requested_fields - available_fields)
-    mo.stop(
-        bool(missing_fields),
-        mo.md(
-            "**Missing template fields:** "
-            + ", ".join(f"`{field}`" for field in missing_fields)
-            + "\n\nUse one of: "
-            + ", ".join(f"`{field}`" for field in sorted(available_fields))
-        ),
-    )
-
-    row_context = {
-        key: "" if value is None else value for key, value in selected_row.items()
-    }
-    rendered_system_prompt = system_template.value.format_map(row_context)
-
-    mo.md(
-        f"## Rendered prompt\n\n**system**\n\n{code_block(rendered_system_prompt)}\n\n"
-    )
-    return (rendered_system_prompt,)
+def _():
+    # modified_mask = pl.read_csv("edited_mask_data/provided_facts_omission_edited(edited_prompts).csv")
+    # modified_mask
+    return
 
 
 @app.cell(hide_code=True)
@@ -348,7 +325,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     # MODELS = [
     #     "openai/gpt-5.4-mini",
@@ -406,7 +383,7 @@ def _(mo):
         start=1,
         stop=32768,
         step=1,
-        value=8192,
+        value=16384,
         label="Max tokens",
     )
     seed = mo.ui.text(
@@ -420,7 +397,7 @@ def _(mo):
     REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"]
     reasoning_level = mo.ui.dropdown(
         options=REASONING_LEVELS,
-        value="medium",
+        value="high",
         label="Reasoning effort",
         full_width=True,
     )
@@ -429,7 +406,7 @@ def _(mo):
     return max_tokens, model_id, reasoning_level, seed, temperature
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
     model_id_value = model_id.value.strip()
     mo.stop(not model_id_value, mo.md("**Model id is required.**"))
@@ -440,12 +417,20 @@ def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
     except ValueError:
         mo.stop(True, mo.md("**Seed must be an integer or blank.**"))
 
-    def build_reasoning(level):
+    def build_reasoning(level, model, max_output_tokens):
         # One effort value for every provider; OpenRouter maps it to the right
         # native control (thinkingLevel / token budget). "none" disables reasoning.
-        return {"effort": level}
+        if level == "none":
+            return None
+        if model.startswith("anthropic/"):
+            return {"max_tokens": min(1024, max(1, max_output_tokens - 1)), "exclude": False}
+        return {"effort": level, "exclude": False}
 
-    reasoning_param = build_reasoning(reasoning_level.value)
+    reasoning_param = build_reasoning(
+        reasoning_level.value,
+        model_id_value,
+        int(max_tokens.value),
+    )
 
     model_params = {
         "model": model_id_value,
@@ -477,6 +462,44 @@ def _(get_turn_results):
 
 @app.cell(hide_code=True)
 def _(mo):
+    system_template = mo.ui.text_area(
+        value="{system_prompt}",
+        rows=6,
+        label="System prompt template",
+        full_width=True,
+    )
+    mo.vstack([system_template])
+    return (system_template,)
+
+
+@app.cell(hide_code=True)
+def _(mo, selected_row, system_template):
+    available_fields = set(selected_row)
+    requested_fields = template_fields(system_template.value)
+    missing_fields = sorted(requested_fields - available_fields)
+    mo.stop(
+        bool(missing_fields),
+        mo.md(
+            "**Missing template fields:** "
+            + ", ".join(f"`{field}`" for field in missing_fields)
+            + "\n\nUse one of: "
+            + ", ".join(f"`{field}`" for field in sorted(available_fields))
+        ),
+    )
+
+    row_context = {
+        key: "" if value is None else value for key, value in selected_row.items()
+    }
+    rendered_system_prompt = system_template.value.format_map(row_context)
+
+    mo.md(
+        f"## Rendered prompt\n\n**system**\n\n{code_block(rendered_system_prompt)}\n\n"
+    )
+    return (rendered_system_prompt,)
+
+
+@app.cell(hide_code=True)
+def _(mo):
     mo.md("""
     ## 4. Continue as a chat
 
@@ -488,7 +511,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     OpenRouterClient,
     api_key,
@@ -530,9 +553,10 @@ def _(
                 reasoning=model_params["reasoning"],
             )
 
-        set_turn_results(
-            {**get_turn_results(), str(turn_idx): chat_result_record(result)}
-        )
+        record = chat_result_record(result)
+        record["model"] = model_id_value
+        record["requested_reasoning"] = model_params["reasoning"]
+        set_turn_results({**get_turn_results(), str(turn_idx): record})
         return result.text if result.text else f"[ERROR: {result.error}]"
 
     chat = mo.ui.chat(
@@ -635,9 +659,20 @@ def _(json, mo, turn_results):
                     f"### Assistant turn {turn_idx}\n\n" + "\n\n".join(trace_parts)
                 )
             else:
+                message_keys = ", ".join(sorted((result.get("message") or {}).keys()))
+                requested_reasoning = json.dumps(
+                    result.get("requested_reasoning"),
+                    indent=2,
+                    ensure_ascii=False,
+                    default=str,
+                )
                 sections.append(
                     f"### Assistant turn {turn_idx}\n\n"
-                    "_No reasoning trace was returned by the selected model/provider for this turn._"
+                    "_No reasoning trace was returned by the selected model/provider for this turn._\n\n"
+                    f"**model:** `{result.get('model')}`\n\n"
+                    f"**requested reasoning**\n\n{code_block(requested_reasoning)}\n\n"
+                    f"**assistant message keys:** `{message_keys or 'none'}`\n\n"
+                    f"**finish_reason:** `{result.get('finish_reason')}`"
                 )
         trace_output = mo.md("## Reasoning trace\n\n" + "\n\n".join(sections))
     else:
@@ -660,7 +695,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     save_conversation = mo.ui.run_button(
         label="End conversation and save JSON",
@@ -753,7 +788,10 @@ def _(
         save_dir
         / f"{ds_slug}__row-{selected_row_idx}__{saved_at.strftime('%Y%m%d-%H%M%S')}.json"
     )
-    save_path.write_text(json.dumps(record, indent=2, ensure_ascii=False, default=str))
+    save_path.write_text(
+        json.dumps(record, indent=2, ensure_ascii=False, default=str),
+        encoding="utf-8",
+    )
 
     mo.md(
         f"""
@@ -762,22 +800,6 @@ def _(
         **Messages saved:** `{len(conversation_messages)}`
         """
     )
-    return
-
-
-@app.cell
-def _():
-    import pandas as pd
-
-    return (pd,)
-
-
-@app.cell
-def _(pd):
-    dataset = pd.read_csv("/Users/antyabharahman/Downloads/Personal/neurips/neurips26-beyond_mask/mask/mask/csv_data/evaluated/provided_facts_claude-opus-4-8.csv")
-    # provided_ds = dataset.loc[dataset.dataset_split == "provided_facts"]
-    # provided_ds
-    dataset.reset_index()
     return
 
 
