@@ -175,7 +175,7 @@ def chat_result_record(result):
         "cached": result.cached,
         "error": result.error,
         "request_hash": result.request_hash,
-        "message": jsonable(result.message),
+        "message": abable(result.message),
         "reasoning": result.reasoning,
         "reasoning_details": jsonable(result.reasoning_details),
         "trace_returned": trace_returned(
