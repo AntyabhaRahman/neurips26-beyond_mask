@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Read(//tmp/marimo-pair-6lk8e2ji/**)",
-      "Bash(find / -name \"execute-code.sh\")"
+      "Bash(find / -name \"execute-code.sh\")",
+      "Bash(git commit *)",
+      "Bash(git *)"
     ]
   }
 }

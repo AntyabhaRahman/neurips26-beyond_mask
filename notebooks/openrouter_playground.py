@@ -312,6 +312,15 @@ def _(mo):
 
 
 @app.cell
+def _(pl):
+    dataset = pl.read_csv("./mask/mask/csv_data/evaluated/known_facts_claude-opus-4-8.csv")
+    # provided_ds = dataset.loc[dataset.dataset_split == "provided_facts"]
+    # provided_ds
+    dataset
+    return
+
+
+@app.cell(hide_code=True)
 def _(mo):
     system_template = mo.ui.text_area(
         value="{system_prompt}",
@@ -323,12 +332,7 @@ def _(mo):
     return (system_template,)
 
 
-@app.cell
-def _():
-    return
-
-
-@app.cell
+@app.cell(hide_code=True)
 def _(mo, selected_row, system_template):
     available_fields = set(selected_row)
     requested_fields = template_fields(system_template.value)
@@ -368,7 +372,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     # MODELS = [
     #     "openai/gpt-5.4-mini",
@@ -426,7 +430,7 @@ def _(mo):
         start=1,
         stop=32768,
         step=1,
-        value=1024,
+        value=16000,
         label="Max tokens",
     )
     seed = mo.ui.text(
@@ -440,7 +444,7 @@ def _(mo):
     REASONING_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh"]
     reasoning_level = mo.ui.dropdown(
         options=REASONING_LEVELS,
-        value="medium",
+        value="high",
         label="Reasoning effort",
         full_width=True,
     )
@@ -449,7 +453,7 @@ def _(mo):
     return max_tokens, model_id, reasoning_level, seed, temperature
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(max_tokens, mo, model_id, reasoning_level, seed, temperature):
     model_id_value = model_id.value.strip()
     mo.stop(not model_id_value, mo.md("**Model id is required.**"))
@@ -513,7 +517,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     OpenRouterClient,
     api_key,
@@ -605,69 +609,153 @@ def _(json, mo, turn_results):
     if turn_results:
 
         def _render_detail(detail):
+
             if not isinstance(detail, dict):
+
                 return code_block(str(detail))
+
             dtype = detail.get("type", "reasoning")
+
             fmt = detail.get("format")
+
             fmt_note = f" · format `{fmt}`" if fmt else ""
+
             if dtype == "reasoning.summary":
+
                 banner = ""
+
                 if fmt == "anthropic-claude-v1":
+
                     banner = (
+
                         "> ⚠️ **Summarized reasoning** — Anthropic returns a condensed "
+
                         "summary, not the full chain of thought.\n\n"
+
                     )
+
                 return (
+
                     f"**`reasoning.summary`**{fmt_note}\n\n"
+
                     f"{banner}{code_block(str(detail.get('summary', '')))}"
+
                 )
+
             if dtype == "reasoning.encrypted":
+
                 data = str(detail.get("data") or "")
+
                 return (
+
                     f"**`reasoning.encrypted`**{fmt_note}\n\n"
+
                     f"_[encrypted/redacted — {len(data)} chars, not human-readable]_"
+
                 )
+
             if dtype == "reasoning.text":
+
                 sig_note = "\n\n_signed_ ✅" if detail.get("signature") else ""
+
                 return (
+
                     f"**`reasoning.text`**{fmt_note}\n\n"
+
                     f"{code_block(str(detail.get('text', '')))}{sig_note}"
+
                 )
+
             return (
+
                 f"**`{dtype}`**{fmt_note}\n\n"
+
                 f"{code_block(json.dumps(detail, indent=2, ensure_ascii=False, default=str))}"
+
             )
 
         sections = []
+
         for turn_idx, result in sorted(
+
             turn_results.items(), key=lambda item: int(item[0])
+
         ):
+
             if trace_returned(result):
+
                 trace_parts = []
+
                 details = result.get("reasoning_details") or []
+
                 if details:
+
                     trace_parts.append("\n\n".join(_render_detail(d) for d in details))
+
                 elif result.get("reasoning"):
+
                     # Some providers only return the flat `reasoning` string.
+
                     trace_parts.append(
+
                         "**reasoning**\n\n" + code_block(str(result["reasoning"]))
+
                     )
+
                 if result.get("reasoning_tokens") is not None:
+
                     trace_parts.append(
+
                         f"**reasoning_tokens:** `{result['reasoning_tokens']}`"
+
                     )
+
                 sections.append(
+
                     f"### Assistant turn {turn_idx}\n\n" + "\n\n".join(trace_parts)
+
                 )
+
             else:
-                sections.append(
-                    f"### Assistant turn {turn_idx}\n\n"
-                    "_No reasoning trace was returned by the selected model/provider for this turn._"
+
+                message_keys = ", ".join(sorted((result.get("message") or {}).keys()))
+
+                requested_reasoning = json.dumps(
+
+                    result.get("requested_reasoning"),
+
+                    indent=2,
+
+                    ensure_ascii=False,
+
+                    default=str,
+
                 )
+
+                sections.append(
+
+                    f"### Assistant turn {turn_idx}\n\n"
+
+                    "_No reasoning trace was returned by the selected model/provider for this turn._\n\n"
+
+                    f"**model:** `{result.get('model')}`\n\n"
+
+                    f"**requested reasoning**\n\n{code_block(requested_reasoning)}\n\n"
+
+                    f"**assistant message keys:** `{message_keys or 'none'}`\n\n"
+
+                    f"**finish_reason:** `{result.get('finish_reason')}`"
+
+                )
+
         trace_output = mo.md("## Reasoning trace\n\n" + "\n\n".join(sections))
+
     else:
+
         trace_output = mo.md(
+
             "## Reasoning trace\n\n_No OpenRouter turns have completed yet._"
+
         )
 
     trace_output
@@ -688,7 +776,7 @@ def _(mo):
     return
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     save_conversation = mo.ui.run_button(
         label="End conversation and save JSON",
@@ -698,7 +786,7 @@ def _(mo):
     return (save_conversation,)
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(
     DATASET_ID,
     RESULTS_ROOT,
@@ -790,22 +878,6 @@ def _(
         **Messages saved:** `{len(conversation_messages)}`
         """
     )
-    return
-
-
-@app.cell
-def _():
-    import pandas as pd
-
-    return (pd,)
-
-
-@app.cell
-def _(pd):
-    dataset = pd.read_csv("/Users/antyabharahman/Downloads/Personal/neurips/neurips26-beyond_mask/mask/mask/csv_data/evaluated/provided_facts_claude-opus-4-8.csv")
-    # provided_ds = dataset.loc[dataset.dataset_split == "provided_facts"]
-    # provided_ds
-    dataset.reset_index()
     return
 
 
