@@ -26,7 +26,7 @@ done
 
 MODELS=(
   # "openai/gpt-5.4-mini"
-  "anthropic/claude-opus-4-8"
+  "anthropic/claude-sonnet-5"
   
   # "openai/another-model"
   # "anthropic/another-model"

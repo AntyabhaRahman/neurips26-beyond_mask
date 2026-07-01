@@ -538,13 +538,14 @@ def _(
         history = [chat_message_to_dict(message) for message in chat_messages]
         turn_idx = sum(1 for m in history if m.get("role") == "assistant") + 1
         outbound_messages = [
-            {"role": "system", "content": rendered_system_prompt},
+            {"role": "system", "content": rendered_system_prompt, },
             *history,
         ]
         cache_dir = None  # always re-run; disk cache disabled
 
         async with OpenRouterClient(api_key) as client:
             result = await client.chat(
+            
                 model=model_id_value,
                 messages=outbound_messages,
                 temperature=model_params["temperature"],

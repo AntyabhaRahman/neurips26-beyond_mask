@@ -1,4 +1,4 @@
-"""Run the MASK opus-4.8 judge via OpenAI's Batch API (50% cheaper than live).
+"""Run the MASK judge via OpenAI's Batch API (50% cheaper than live).
 
 The org's gpt-5.5 batch quota caps *concurrent in-flight* tokens at 900k, so the
 ~11.6M-token job cannot go in one batch. This splits it into ~280k-token chunks
@@ -60,6 +60,18 @@ POLL_SECONDS = 30
 MAX_RETRIES = 5  # per chunk, before giving up
 TERMINAL = {"completed", "failed", "expired", "cancelled"}
 _ENC = tiktoken.get_encoding("o200k_base")
+
+
+def configure(model_slug: str, archetypes: list[str], batch_dir: Path) -> None:
+    global MODEL_SLUG, ARCHETYPES, BATCH_DIR
+    global INDEX_JSON, PROGRESS_JSON, ACCUM_JSONL
+
+    MODEL_SLUG = model_slug
+    ARCHETYPES = archetypes
+    BATCH_DIR = batch_dir
+    INDEX_JSON = BATCH_DIR / "judge_index.json"
+    PROGRESS_JSON = BATCH_DIR / "progress.json"
+    ACCUM_JSONL = BATCH_DIR / "accum.jsonl"
 
 
 def collect_requests() -> list[dict]:
@@ -310,7 +322,11 @@ def main() -> None:
     group.add_argument(
         "--build", action="store_true", help="rebuild CSVs from accum.jsonl"
     )
+    parser.add_argument("--model-slug", default=MODEL_SLUG)
+    parser.add_argument("--archetypes", nargs="+", choices=ARCHETYPES, default=ARCHETYPES)
+    parser.add_argument("--batch-dir", type=Path, default=BATCH_DIR)
     args = parser.parse_args()
+    configure(args.model_slug, args.archetypes, args.batch_dir)
 
     if args.build:
         build_evaluated()

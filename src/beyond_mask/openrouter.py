@@ -59,6 +59,9 @@ def _cache_key(
         "session_id": session_id,
         "reasoning": reasoning,
         "response_format": response_format,
+        "provider": {
+            "order": ["azure/eu"],
+        },
     }
     if tools is not None:
         payload_dict["tools"] = tools
