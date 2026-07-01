@@ -175,7 +175,7 @@ def chat_result_record(result):
         "cached": result.cached,
         "error": result.error,
         "request_hash": result.request_hash,
-        "message": abable(result.message),
+        "message": jsonable(result.message),
         "reasoning": result.reasoning,
         "reasoning_details": jsonable(result.reasoning_details),
         "trace_returned": trace_returned(
@@ -301,9 +301,9 @@ def _(mo):
 
 
 @app.cell
-def _():
-    # dataset = pl.read_csv("mask/mask/csv_data/evaluated/doubling_down_known_facts_claude-opus-4-8.csv")
-    # dataset.filter(pl.col("eval(System Prompt + User Prompt)_run1_extracted") == "C")
+def _(pl):
+    dataset = pl.read_csv("mask/mask/csv_data/evaluated/known_facts_claude-opus-4-8.csv")
+    dataset.filter(pl.col("eval(System Prompt + User Prompt)_run1_extracted") == "C")
     return
 
 
@@ -356,10 +356,12 @@ def _(mo):
         "openai/gpt-5.4-mini",
         "openai/gpt-5.4",
         "openai/gpt-5.5",
+        "anthropic/claude-fable-5",
         "anthropic/claude-opus-4.8",
         "anthropic/claude-opus-4.7",
         "anthropic/claude-opus-4.6",
         "anthropic/claude-sonnet-4.6",
+        "anthropic/claude-sonnet-5",
         "google/gemini-3.1-pro-preview",
         "deepseek/deepseek-v4-pro",
         "moonshotai/kimi-k2.6",
@@ -570,36 +572,6 @@ def _(
 
 
 @app.cell(hide_code=True)
-def _(chat, conversation_id, mo, rendered_system_prompt):
-    _history = [chat_message_to_dict(message) for message in chat.value]
-    if _history:
-        formatted_messages = [
-            {"role": "system", "content": rendered_system_prompt},
-            *_history,
-        ]
-        rendered = "\n\n".join(
-            f"### {idx}. {message['role']}\n\n{code_block(message['content'])}"
-            for idx, message in enumerate(formatted_messages, start=1)
-        )
-        formatted_conversation_output = mo.md(
-            f"""
-        ## Formatted conversation
-
-        **Conversation id:** `{conversation_id}`
-
-        {rendered}
-        """
-        )
-    else:
-        formatted_conversation_output = mo.md(
-            "_No chat turns yet. Send a message above to build the transcript._"
-        )
-
-    formatted_conversation_output
-    return
-
-
-@app.cell(hide_code=True)
 def _(json, mo, turn_results):
     if turn_results:
 
@@ -739,6 +711,36 @@ def _(json, mo, turn_results):
         )
 
     trace_output
+    return
+
+
+@app.cell(hide_code=True)
+def _(chat, conversation_id, mo, rendered_system_prompt):
+    _history = [chat_message_to_dict(message) for message in chat.value]
+    if _history:
+        formatted_messages = [
+            {"role": "system", "content": rendered_system_prompt},
+            *_history,
+        ]
+        rendered = "\n\n".join(
+            f"### {idx}. {message['role']}\n\n{code_block(message['content'])}"
+            for idx, message in enumerate(formatted_messages, start=1)
+        )
+        formatted_conversation_output = mo.md(
+            f"""
+        ## Formatted conversation
+
+        **Conversation id:** `{conversation_id}`
+
+        {rendered}
+        """
+        )
+    else:
+        formatted_conversation_output = mo.md(
+            "_No chat turns yet. Send a message above to build the transcript._"
+        )
+
+    formatted_conversation_output
     return
 
 
