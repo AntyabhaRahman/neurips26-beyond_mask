@@ -191,8 +191,14 @@ def chat_result_record(result):
 
 @app.function(hide_code=True)
 def code_block(text):
-    delimiter = "````" if "```" in text else "```"
-    return f"{delimiter}text\n{text}\n{delimiter}"
+    import html
+
+    escaped_text = html.escape(text)
+    return (
+        '<pre style="white-space: pre-wrap; overflow-wrap: anywhere; '
+        'max-width: 100%; background-color: #e5e7eb; color: #1f2937;">'
+        f"<code>{escaped_text}</code></pre>"
+    )
 
 
 @app.function(hide_code=True)
