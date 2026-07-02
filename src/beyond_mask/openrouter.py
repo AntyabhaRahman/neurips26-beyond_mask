@@ -60,7 +60,7 @@ def _cache_key(
         "reasoning": reasoning,
         "response_format": response_format,
         "provider": {
-            "order": ["azure/eu"],
+            "order": ["anthropic", "azure"],
         },
     }
     if tools is not None:
